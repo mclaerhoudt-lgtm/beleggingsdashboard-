@@ -1,14 +1,15 @@
 import {
   ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid,
-  Legend, ResponsiveContainer, Cell, ReferenceLine, LabelList,
+  ResponsiveContainer, Cell, ReferenceLine, LabelList,
 } from 'recharts'
+import { Tooltip } from 'recharts'
 import { formatEuro } from '../../utils/formatters'
 
 export interface MarketDataPoint {
   label: string
   koers: number
-  rendement: number     // month-over-month %
-  verschilEuro: number  // koers − prev_koers
+  rendement: number
+  verschilEuro: number
   isBest?: boolean
   isWorst?: boolean
 }
@@ -18,9 +19,16 @@ interface Props {
   name: string
 }
 
-// ─── Custom tooltip ──────────────────────────────────────────────────────────
+// ─── Y-axis formatter ─────────────────────────────────────────────────────────
+function fmtY(v: number): string {
+  const n = Number(v)
+  if (n >= 1_000_000) return `€${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000)     return `€${Math.round(n / 1000)}k`
+  return `€${Math.round(n)}`
+}
 
-function Tooltip({ active, payload, label }: {
+// ─── Custom tooltip ───────────────────────────────────────────────────────────
+function CustomTooltip({ active, payload, label }: {
   active?: boolean
   payload?: Array<{ dataKey: string; value: number; payload: MarketDataPoint }>
   label?: string
@@ -28,10 +36,9 @@ function Tooltip({ active, payload, label }: {
   if (!active || !payload?.length) return null
   const d = payload[0].payload
   const rendIsPos = d.rendement >= 0
-
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-xl p-3 shadow-lg text-sm min-w-[160px]">
-      <p className="font-semibold text-gray-700 dark:text-gray-200 mb-2">{label}</p>
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-xl p-3 shadow-lg text-sm min-w-[150px]">
+      <p className="font-semibold text-gray-700 dark:text-gray-200 mb-1.5">{label}</p>
       <p className="text-gray-600 dark:text-gray-300">
         Koers: <span className="font-medium tabular-nums">{formatEuro(d.koers)}</span>
       </p>
@@ -45,8 +52,7 @@ function Tooltip({ active, payload, label }: {
   )
 }
 
-// ─── Best/worst label renderer ───────────────────────────────────────────────
-
+// ─── Best/worst label ─────────────────────────────────────────────────────────
 function BestWorstLabel(props: {
   x?: number; y?: number; width?: number; value?: number; index?: number;
   data: MarketDataPoint[]
@@ -55,11 +61,10 @@ function BestWorstLabel(props: {
   const d = data[index]
   if (!d?.isBest && !d?.isWorst) return null
   const isPos = (value as number) >= 0
-  const dy = isPos ? -6 : 14
   return (
     <text
       x={(x as number) + (width as number) / 2}
-      y={(y as number) + dy}
+      y={(y as number) + (isPos ? -5 : 12)}
       textAnchor="middle"
       fontSize={9}
       fontWeight={600}
@@ -70,33 +75,43 @@ function BestWorstLabel(props: {
   )
 }
 
-// ─── Main chart ──────────────────────────────────────────────────────────────
-
+// ─── Main chart ───────────────────────────────────────────────────────────────
 export function MarketChart({ data, name }: Props) {
   if (data.length === 0) return null
+
+  // Responsive bar size: narrow on mobile, wider on larger screens
+  const barSize = typeof window !== 'undefined' && window.innerWidth < 640 ? 8 : 14
+
   return (
     <ResponsiveContainer width="100%" height={360}>
-      <ComposedChart data={data} margin={{ top: 20, right: 48, left: 0, bottom: 0 }}>
+      <ComposedChart data={data} margin={{ top: 20, right: 44, left: 0, bottom: 40 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+        <XAxis
+          dataKey="label"
+          tick={{ fontSize: 10 }}
+          angle={-45}
+          textAnchor="end"
+          height={50}
+          interval="preserveStartEnd"
+        />
         <YAxis
           yAxisId="left"
-          tickFormatter={v => `€${Number(v) >= 1000 ? `${(Number(v) / 1000).toFixed(1)}k` : Number(v)}`}
-          tick={{ fontSize: 11 }}
-          width={64}
+          tickFormatter={fmtY}
+          tick={{ fontSize: 10 }}
+          width={52}
+          tickMargin={4}
         />
         <YAxis
           yAxisId="right"
           orientation="right"
           tickFormatter={v => `${Number(v).toFixed(0)}%`}
-          tick={{ fontSize: 11 }}
-          width={44}
+          tick={{ fontSize: 10 }}
+          width={36}
+          tickMargin={4}
         />
-        {/* @ts-expect-error recharts v3 content prop typing */}
-        <Tooltip content={<Tooltip />} />
-        <Legend />
+        <Tooltip content={<CustomTooltip />} />
         <ReferenceLine yAxisId="right" y={0} stroke="#9ca3af" strokeDasharray="3 3" />
-        <Bar yAxisId="right" dataKey="rendement" name="Maand %" radius={[3, 3, 0, 0]} barSize={12}>
+        <Bar yAxisId="right" dataKey="rendement" name="Maand %" radius={[3, 3, 0, 0]} barSize={barSize}>
           {data.map((d, i) => (
             <Cell
               key={i}
