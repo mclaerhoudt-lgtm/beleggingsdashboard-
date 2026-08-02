@@ -64,6 +64,97 @@ function resolveKoers(
   return { koers: 0, isSchatting: true }
 }
 
+export interface JaarKoersRendement {
+  jaar: number
+  koersBegin: number
+  koersEind: number
+  rendementPct: number | null  // null wanneer er voor dit jaar helemaal geen koersdata is
+  rendementEuro: number        // per aandeel (eind − begin, geen aantal)
+  isYtd: boolean                // lopend jaar — koersEind is de stand tot nu toe, geen afgesloten jaar
+  vanafMaand: number | null     // eerste jaar met data: begin viel terug op deze maand i.p.v. december vorig jaar
+  isSchatting: boolean          // koersEind kon niet uit echte data bepaald worden (geen enkele maand bekend)
+}
+
+// Kalenderjaar-rendement van één ISIN op basis van de maand-eindkoersen: begin = december-
+// slotkoers van het jaar ervoor (zodat de januaribeweging meetelt), eind = december-slotkoers
+// van dit jaar, of — voor het lopende jaar — de live koers (YTD) resp. de laatst afgesloten
+// maand als die live koers ontbreekt. Voor het allereerste jaar met data (geen december
+// ervoor) valt begin terug op de eerste beschikbare maand van dat jaar zelf.
+export function calcJaarKoersRendement(
+  priceMap: Record<string, number> | undefined,
+  jaar: number,
+  liveKoers?: number,
+): JaarKoersRendement | null {
+  if (!priceMap) return null
+
+  const isHuidigJaar = jaar === new Date().getFullYear()
+  const jaarKeys = Object.keys(priceMap).filter(k => k.startsWith(`${jaar}-`)).sort()
+
+  let vanafMaand: number | null = null
+  let koersBegin: number
+  const decemberVorigJaar = priceMap[`${jaar - 1}-12`]
+  if (decemberVorigJaar != null && decemberVorigJaar > 0) {
+    koersBegin = decemberVorigJaar
+  } else if (jaarKeys.length > 0) {
+    vanafMaand = parseInt(jaarKeys[0].split('-')[1], 10) - 1
+    koersBegin = priceMap[jaarKeys[0]]
+  } else {
+    return null  // helemaal geen koersdata voor of in dit jaar
+  }
+  if (!koersBegin || koersBegin <= 0) return null
+
+  let koersEind: number
+  let isSchatting = false
+  if (isHuidigJaar && liveKoers && liveKoers > 0) {
+    koersEind = liveKoers
+  } else if (jaarKeys.length > 0) {
+    koersEind = priceMap[jaarKeys[jaarKeys.length - 1]]
+  } else {
+    // Geen enkele maand dit jaar bekend (bv. jaar net begonnen, live koers ontbreekt ook):
+    // geen betrouwbare eindkoers — dan geen (misleidend) percentage tonen.
+    koersEind = koersBegin
+    isSchatting = true
+  }
+  if (!koersEind || koersEind <= 0) return null
+
+  const rendementEuro = koersEind - koersBegin
+  const rendementPct  = isSchatting ? null : (rendementEuro / koersBegin) * 100
+
+  return { jaar, koersBegin, koersEind, rendementPct, rendementEuro, isYtd: isHuidigJaar, vanafMaand, isSchatting }
+}
+
+export interface GemiddeldJaarRendement {
+  rendementPct: number   // CAGR — het jaarlijkse rendement dat, samengesteld, tot dezelfde
+                          // totale koersbeweging leidt over de volledige periode
+  vanaf: string           // 'YYYY-MM' — eerste beschikbare maand
+  tot: string              // 'YYYY-MM' — laatste beschikbare (afgesloten) maand
+  jaren: number
+}
+
+// Geannualiseerd gemiddeld rendement (CAGR) over de hele beschikbare koershistorie van
+// één ISIN. Gebruikt de samengestelde-groeiformule i.p.v. een simpel rekenkundig
+// gemiddelde van de losse jaarrendementen — dat laatste is misleidend bij wisselende
+// plus- en minjaren (bv. +50% en −50% "gemiddeld" 0%, terwijl het per saldo −25% is).
+export function calcGemiddeldJaarRendement(priceMap: Record<string, number> | undefined): GemiddeldJaarRendement | null {
+  if (!priceMap) return null
+  const keys = Object.keys(priceMap).sort()
+  if (keys.length < 2) return null
+
+  const eersteKey = keys[0]
+  const laatsteKey = keys[keys.length - 1]
+  const eerstePrijs = priceMap[eersteKey]
+  const laatstePrijs = priceMap[laatsteKey]
+  if (!eerstePrijs || eerstePrijs <= 0 || !laatstePrijs || laatstePrijs <= 0) return null
+
+  const [fy, fm] = eersteKey.split('-').map(Number)
+  const [ly, lm] = laatsteKey.split('-').map(Number)
+  const maanden = (ly - fy) * 12 + (lm - fm)
+  if (maanden < 1) return null
+
+  const rendementPct = (Math.pow(laatstePrijs / eerstePrijs, 12 / maanden) - 1) * 100
+  return { rendementPct, vanaf: eersteKey, tot: laatsteKey, jaren: maanden / 12 }
+}
+
 // Cumulative position snapshot at the last moment of `maxDate`
 function positiesOpMoment(
   transactions: Transaction[],
