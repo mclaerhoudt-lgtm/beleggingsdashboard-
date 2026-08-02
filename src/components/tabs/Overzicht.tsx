@@ -3,7 +3,7 @@ import { MetricCard } from '../ui/MetricCard'
 import { SliderInput } from '../ui/SliderInput'
 import { GrowthChart } from '../charts/GrowthChart'
 import { ReturnChart } from '../charts/ReturnChart'
-import { formatEuro, formatPct, MAANDEN } from '../../utils/formatters'
+import { formatEuro, formatPct, formatDatumKort, MAANDEN } from '../../utils/formatters'
 import { calcPortfolioHistorie, calcReeel, KORTE_NAAM } from '../../utils/calculations'
 import type { Settings, Transaction, AccountEvent, ManualEntry, Position, KoersHistorie, KoersCache } from '../../types'
 import { COLORS } from '../../theme'
@@ -21,6 +21,7 @@ interface Props {
   rendement: number
   rendementPct: number
   eersteJaar: number
+  laatsteDatum: Date | null
   settings: Settings
   onSettingsChange: (s: Settings) => void
   transactions: Transaction[]
@@ -54,7 +55,7 @@ function BreakdownRij({ isin, naam, bedrag, pct, sub }: {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function Overzicht({
-  portfolioValue, totaalIngelegd, rendement, rendementPct, eersteJaar,
+  portfolioValue, totaalIngelegd, rendement, rendementPct, eersteJaar, laatsteDatum,
   settings, onSettingsChange, transactions, manualEntries, positions, koersHistorie, koersen, loading,
 }: Props) {
   const reeel  = calcReeel(portfolioValue, settings.inflatie, new Date().getFullYear(), eersteJaar)
@@ -127,6 +128,12 @@ export function Overzicht({
 
   return (
     <div className="space-y-6">
+      {laatsteDatum && (
+        <p className="text-xs text-gray-400 dark:text-gray-500">
+          Data bijgewerkt t/m <span className="font-medium text-gray-500 dark:text-gray-400">{formatDatumKort(laatsteDatum)}</span>
+        </p>
+      )}
+
       {/* Metric cards — first two have expandable position breakdown */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
 

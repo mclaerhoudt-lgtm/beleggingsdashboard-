@@ -1,13 +1,14 @@
 import { useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { parseTransactionsCsv, parseAccountCsv } from '../../utils/csvParser'
-import { formatEuro } from '../../utils/formatters'
+import { formatEuro, formatDatumKort } from '../../utils/formatters'
 import type { Transaction, AccountEvent, ManualEntry } from '../../types'
 
 interface Props {
   transactions: Transaction[]
   accountEvents: AccountEvent[]
   manualEntries: ManualEntry[]
+  laatsteDatum: Date | null
   onTransactions: (t: Transaction[]) => void
   onAccountEvents: (e: AccountEvent[]) => void
   onManualEntries: (m: ManualEntry[]) => void
@@ -23,7 +24,7 @@ interface Summary {
 }
 
 export function Import({
-  transactions, accountEvents, manualEntries,
+  transactions, accountEvents, manualEntries, laatsteDatum,
   onTransactions, onAccountEvents, onManualEntries, onReset,
 }: Props) {
   const txRef = useRef<HTMLInputElement>(null)
@@ -171,7 +172,14 @@ export function Import({
 
       {/* Current data stats */}
       <div className="bg-white dark:bg-gray-800 rounded-2xl p-5 border border-gray-100 dark:border-gray-700">
-        <h2 className="text-base font-semibold text-gray-700 dark:text-gray-200 mb-3">Huidige data</h2>
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-1">
+          <h2 className="text-base font-semibold text-gray-700 dark:text-gray-200">Huidige data</h2>
+          <p className="text-xs text-gray-400 dark:text-gray-500">
+            {laatsteDatum
+              ? <>Bijgewerkt t/m <span className="font-medium text-gray-600 dark:text-gray-300">{formatDatumKort(laatsteDatum)}</span></>
+              : 'Nog geen data geïmporteerd'}
+          </p>
+        </div>
         <div className="grid grid-cols-3 gap-3 text-center">
           <div className="bg-gray-50 dark:bg-gray-700 rounded-xl p-3">
             <p className="text-2xl font-bold text-gray-800 dark:text-white">{transactions.length}</p>

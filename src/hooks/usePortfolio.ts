@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useLocalStorage } from './useLocalStorage'
-import { calcPositions, calcPortfolioValue, calcTotaalIngelegd, calcEersteJaar, calcReeel } from '../utils/calculations'
+import { calcPositions, calcPortfolioValue, calcTotaalIngelegd, calcEersteJaar, calcReeel, calcLaatsteDatum } from '../utils/calculations'
 import type { Transaction, AccountEvent, ManualEntry, Settings, KoersCache } from '../types'
 import { DEFAULT_SETTINGS } from '../types'
 
@@ -46,6 +46,7 @@ export function usePortfolio(koersen: KoersCache) {
   const rendementPct = totaalIngelegd > 0 ? (rendement / totaalIngelegd) * 100 : 0
   const eersteJaar = useMemo(() => calcEersteJaar(transactions, manualEntries), [transactions, manualEntries])
   const reeel = calcReeel(portfolioValue, settings.inflatie, new Date().getFullYear(), eersteJaar)
+  const laatsteDatum = useMemo(() => calcLaatsteDatum(transactions, accountEvents), [transactions, accountEvents])
 
   function resetAll() {
     setTransactions([])
@@ -69,6 +70,7 @@ export function usePortfolio(koersen: KoersCache) {
     rendementPct,
     reeel,
     eersteJaar,
+    laatsteDatum,
     resetAll,
   }
 }

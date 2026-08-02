@@ -698,6 +698,22 @@ export function calcReeel(waarde: number, inflatiePct: number, jaar: number, eer
   return waarde / Math.pow(1 + inflatiePct / 100, jarenBelegd)
 }
 
+// Meest recente datum die daadwerkelijk in de geïmporteerde CSV-data voorkomt
+// (Transactions.csv / Account.csv) — laat zien tot wanneer de import "bijgewerkt" is,
+// los van wanneer de gebruiker de import zelf heeft uitgevoerd.
+export function calcLaatsteDatum(transactions: Transaction[], accountEvents: AccountEvent[]): Date | null {
+  let laatste: number | null = null
+  for (const t of transactions) {
+    const ms = new Date(t.datum).getTime()
+    if (laatste === null || ms > laatste) laatste = ms
+  }
+  for (const e of accountEvents) {
+    const ms = new Date(e.datum).getTime()
+    if (laatste === null || ms > laatste) laatste = ms
+  }
+  return laatste === null ? null : new Date(laatste)
+}
+
 export function calcTotaalIngelegd(accountEvents: AccountEvent[]): number {
   return accountEvents.reduce((sum, e) => {
     if (e.type === 'storting') return sum + e.bedrag

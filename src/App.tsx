@@ -68,6 +68,7 @@ export default function App() {
         rendement={portfolio.rendement}
         rendementPct={portfolio.rendementPct}
         eersteJaar={portfolio.eersteJaar}
+        laatsteDatum={portfolio.laatsteDatum}
         settings={portfolio.settings}
         onSettingsChange={portfolio.setSettings}
         transactions={portfolio.transactions}
@@ -108,6 +109,7 @@ export default function App() {
         transactions={portfolio.transactions}
         accountEvents={portfolio.accountEvents}
         manualEntries={portfolio.manualEntries}
+        laatsteDatum={portfolio.laatsteDatum}
         onTransactions={portfolio.setTransactions}
         onAccountEvents={portfolio.setAccountEvents}
         onManualEntries={portfolio.setManualEntries}
