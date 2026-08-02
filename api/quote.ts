@@ -174,7 +174,9 @@ export default async function handler(req: Request): Promise<Response> {
     headers: {
       'Content-Type': 'application/json',
       // Monthly history barely changes intra-day; live quotes stay short-lived.
-      'Cache-Control': isHistory ? 'public, max-age=3600' : 'public, max-age=60',
+      // Kept relatively short (i.p.v. 1u) zodat een toekomstige serverfix niet
+      // een uur lang door al gecachte foutieve responses tegengehouden wordt.
+      'Cache-Control': isHistory ? 'public, max-age=600' : 'public, max-age=60',
       'Access-Control-Allow-Origin': '*',
     },
   })

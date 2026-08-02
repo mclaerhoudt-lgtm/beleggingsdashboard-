@@ -9,6 +9,12 @@ const SYMBOLS = Object.values(ISIN_SYMBOLS)
 // af zodat al gecachte, verkeerd gelabelde data niet blijft hangen tot de
 // volgende kalendermaand.
 const CACHE_KEY = 'bdash_historische_koersen_v2'
+// Zelfde reden als hierboven, maar dan voor de browser/CDN-HTTP-cache: de
+// /api/quote?history=1-response heeft max-age=3600. Browsers die vóór deze
+// fix live ging al een (foutieve) response cachten, zouden die tot een uur
+// blijven hergebruiken zonder de server opnieuw te raken. Een nieuwe query-
+// parameter maakt het een ander URL, dus een gegarandeerd verse fetch.
+const HISTORY_VERSION = 2
 
 interface HistorieResponseItem {
   symbol: string
@@ -39,7 +45,7 @@ export function useHistorischeKoersen() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`/api/quote?history=1&symbols=${SYMBOLS.join(',')}`, {
+      const res = await fetch(`/api/quote?history=1&v=${HISTORY_VERSION}&symbols=${SYMBOLS.join(',')}`, {
         signal: AbortSignal.timeout(15_000),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -47,11 +53,15 @@ export function useHistorischeKoersen() {
 
       setCache(prev => {
         const bySymbol = { ...prev.bySymbol }
+        let alleGelukt = true
         for (const { symbol, prices } of data) {
-          if (prices.length === 0) continue   // server-side fetch failed for this symbol — keep old data
+          if (prices.length === 0) { alleGelukt = false; continue } // server-side fetch failed for this symbol — keep old data
           bySymbol[symbol] = Object.fromEntries(prices.map(p => [p.month, p.close]))
         }
-        return { fetchedMonth: huidigeMaandKey(), bySymbol }
+        // Alleen fetchedMonth bijwerken als echt alle symbolen gelukt zijn — anders
+        // blokkeert de effect-gate hieronder een hernieuwde poging tot volgende maand,
+        // terwijl er dan mogelijk nog verouderde/foute data voor een symbool achterblijft.
+        return { fetchedMonth: alleGelukt ? huidigeMaandKey() : prev.fetchedMonth, bySymbol }
       })
     } catch {
       // Network error — keep existing cached data, retry next mount/month
