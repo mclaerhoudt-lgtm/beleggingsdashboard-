@@ -4,7 +4,11 @@ import type { KoersHistorie } from '../types'
 import { ISIN_SYMBOLS } from '../types'
 
 const SYMBOLS = Object.values(ISIN_SYMBOLS)
-const CACHE_KEY = 'bdash_historische_koersen'
+// v2: bumped omdat de maandlabeling voorheen in UTC i.p.v. beurstijd gebeurde
+// (schoof candles rond maandgrenzen een maand terug) — dwingt een verse fetch
+// af zodat al gecachte, verkeerd gelabelde data niet blijft hangen tot de
+// volgende kalendermaand.
+const CACHE_KEY = 'bdash_historische_koersen_v2'
 
 interface HistorieResponseItem {
   symbol: string

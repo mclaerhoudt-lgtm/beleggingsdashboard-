@@ -5,6 +5,7 @@ interface YahooMeta {
   chartPreviousClose?: number
   regularMarketPreviousClose?: number
   currency?: string
+  gmtoffset?: number   // beursoffset t.o.v. UTC in seconden — nodig om candles in lokale beurstijd te labelen
 }
 
 interface YahooResult {
@@ -88,14 +89,28 @@ async function fetchHistory(symbol: string): Promise<HistoryResult> {
   const closes = result?.indicators?.quote?.[0]?.close ?? []
   const adjcloses = result?.indicators?.adjclose?.[0]?.adjclose ?? []
 
-  const prices: MaandKoers[] = []
+  // Yahoo's candle timestamps are UTC. Labelen op basis van UTC schuift de
+  // maand terug voor beurzen ten oosten van Greenwich (bv. Amsterdam), omdat
+  // "1 juni 00:00 lokaal" al "31 mei 22:00 UTC" is. Corrigeer met de beurs-
+  // offset (gmtoffset, in seconden) vóór het bepalen van de kalendermaand.
+  const gmtoffset = result?.meta?.gmtoffset ?? 0
+  const huidigeMaand = new Date(Date.now() + gmtoffset * 1000).toISOString().slice(0, 7)
+
+  // Map i.p.v. array: als twee candles (zou niet moeten, maar defensief) op
+  // dezelfde maand uitkomen, wint de laatste (meest recente) close.
+  const perMaand = new Map<string, number>()
   for (let i = 0; i < timestamps.length; i++) {
     const close = closes[i] ?? adjcloses[i]
     if (close == null) continue
-    const month = new Date(timestamps[i] * 1000).toISOString().slice(0, 7)
-    prices.push({ month, close })
+    const month = new Date((timestamps[i] + gmtoffset) * 1000).toISOString().slice(0, 7)
+    // De huidige, nog lopende maand heeft geen echte close — Yahoo levert hier
+    // de tussentijdse koers. Die mag nooit als afgesloten maand-eindkoers
+    // opgeslagen worden (de live koers dekt de lopende maand al af).
+    if (month === huidigeMaand) continue
+    perMaand.set(month, close)
   }
 
+  const prices: MaandKoers[] = Array.from(perMaand, ([month, close]) => ({ month, close }))
   return { symbol, prices }
 }
 

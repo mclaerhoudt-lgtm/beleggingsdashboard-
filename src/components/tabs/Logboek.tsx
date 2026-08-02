@@ -52,10 +52,13 @@ function MonthTile({
 }: {
   maand: number; data: MaandData; isSelected: boolean; onClick: () => void
 }) {
-  const isActive       = data.hasPosities
-  const isInstapmaand  = isActive && data.rendementPct == null
-  const isNeutraal     = isActive && data.rendementPct != null && Math.abs(data.rendementPct) < 0.05
-  const isPos          = isActive && data.rendementPct != null && data.rendementPct >= 0
+  const isActive           = data.hasPosities
+  const isInstapmaand      = isActive && data.rendementPct == null && data.waardeBeginMaand <= 0
+  // Lopende maand zonder betrouwbare live koers: eindkoers is teruggevallen op de
+  // laatste bekende close, dus geen echte meting — toon geen (misleidend) percentage.
+  const isOnzekereSchatting = isActive && data.rendementPct == null && data.waardeBeginMaand > 0
+  const isNeutraal         = isActive && data.rendementPct != null && Math.abs(data.rendementPct) < 0.05
+  const isPos              = isActive && data.rendementPct != null && data.rendementPct >= 0
 
   return (
     <button
@@ -74,6 +77,11 @@ function MonthTile({
         <>
           {isInstapmaand ? (
             <p className="text-sm font-semibold text-blue-500 dark:text-blue-400">Instapmaand</p>
+          ) : isOnzekereSchatting ? (
+            <>
+              <p className="text-lg font-bold tabular-nums text-gray-400 dark:text-gray-500">±</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500">Schatting — koers ontbreekt</p>
+            </>
           ) : isNeutraal ? (
             <>
               <p className="text-lg font-bold tabular-nums text-gray-500 dark:text-gray-400">
@@ -165,6 +173,9 @@ function DetailPanel({ maand, year, data, onClose }: {
   const totalKosten       = [...data.aankopen, ...data.verkopen].reduce((s, t) => s + t.transactiekosten, 0)
   const positiesMetData   = data.positieDetails.filter(p => p.koersEindMaand > 0 || p.koersBeginMaand > 0)
   const heeftTransacties  = data.aankopen.length > 0 || data.verkopen.length > 0
+  // null-pct met een echte beginwaarde = geen instapmaand maar een lopende maand zonder
+  // betrouwbare live koers — dan geen groen/rood %, wel duidelijk als schatting labelen.
+  const isOnzekerTotaal   = data.rendementPct == null && data.waardeBeginMaand > 0
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-2xl border border-blue-200 dark:border-blue-700 overflow-hidden">
@@ -272,7 +283,8 @@ function DetailPanel({ maand, year, data, onClose }: {
               Koersrendement (gecorrigeerd voor inleg)
             </p>
             {positiesMetData.map(p => {
-              const isPos = p.rendementEuro >= 0
+              const isOnzeker = p.rendementPct == null && p.aantalBeginMaand > 0
+              const isPos = !isOnzeker && p.rendementEuro >= 0
               const naam  = KORTE_NAAM[p.isin] ?? p.product.slice(0, 14)
               return (
                 <div key={p.isin} className="flex justify-between items-baseline gap-2">
@@ -280,18 +292,20 @@ function DetailPanel({ maand, year, data, onClose }: {
                     {naam}
                     {p.isSchatting && <span className="text-gray-300 dark:text-gray-600"> ~</span>}
                   </span>
-                  <span className={`text-sm font-semibold tabular-nums shrink-0 ${isPos ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
-                    {pctLabel(p.rendementPct, 1)} ({formatEuro(p.rendementEuro)})
+                  <span className={`text-sm font-semibold tabular-nums shrink-0 ${
+                    isOnzeker ? 'text-gray-400 dark:text-gray-500' : isPos ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'
+                  }`}>
+                    {isOnzeker ? 'schatting — koers ontbreekt' : `${pctLabel(p.rendementPct, 1)} (${formatEuro(p.rendementEuro)})`}
                   </span>
                 </div>
               )
             })}
             <div className={`flex justify-between items-baseline gap-2 pt-1.5 border-t border-gray-100 dark:border-gray-700 ${
-              data.rendementEuro >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'
+              isOnzekerTotaal ? 'text-gray-400 dark:text-gray-500' : data.rendementEuro >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'
             }`}>
               <span className="text-sm font-bold">Portefeuille</span>
               <span className="text-sm font-bold tabular-nums shrink-0">
-                {pctLabel(data.rendementPct, 2)} ({formatEuro(data.rendementEuro)})
+                {isOnzekerTotaal ? 'schatting — koers ontbreekt' : `${pctLabel(data.rendementPct, 2)} (${formatEuro(data.rendementEuro)})`}
               </span>
             </div>
           </div>

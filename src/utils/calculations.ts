@@ -94,7 +94,7 @@ export interface PortfolioMaand {
   waarde: number        // end-of-month portfolio value (current month: live price approximation)
   ingelegd: number      // cumulative invested (sum |totaal| for buys)
   rendementEuro: number // waarde_eind − waarde_begin − nettoInleg_deze_maand (koersrendement)
-  rendementPct: number  // rendementEuro / prevWaarde × 100 (0 when there's no prior baseline)
+  rendementPct: number | null // rendementEuro / prevWaarde × 100; null zonder basis of zonder betrouwbare lopende-maandkoers
   isSchatting: boolean  // lopende maand en/of carried-forward koers gebruikt
 }
 
@@ -126,6 +126,10 @@ export function calcPortfolioHistorie(
 
     let waarde = 0
     let isSchatting = false
+    // Zoals in berekenMaandData: als de live koers voor de lopende maand niet
+    // beschikbaar is, valt koers terug op de laatst bekende maand-eindkoers —
+    // gelijk aan de vorige maand, dus geen echte meting. Dan geen percentage tonen.
+    let huidigeMaandOnbetrouwbaar = false
     for (const [isin, { aantal }] of Object.entries(pos)) {
       const priceMap = koersHistorie[isin]
       let koers: number
@@ -137,6 +141,7 @@ export function calcPortfolioHistorie(
           koers = live
         } else {
           koers = resolveKoers(priceMap, thisKey).koers
+          huidigeMaandOnbetrouwbaar = true
         }
         isSchatting = true // lopende maand — nooit een echte maand-eindkoers
       } else {
@@ -157,7 +162,7 @@ export function calcPortfolioHistorie(
       .reduce((s, t) => s + t.totaal, 0)
 
     const rendementEuro = waarde - prevWaarde - nettoInlegMaand
-    const rendementPct  = prevWaarde > 0 ? (rendementEuro / prevWaarde) * 100 : 0
+    const rendementPct  = (prevWaarde > 0 && !huidigeMaandOnbetrouwbaar) ? (rendementEuro / prevWaarde) * 100 : (prevWaarde > 0 ? null : 0)
 
     if (waarde > 0) {
       months.push({ key: thisKey, waarde, ingelegd, rendementEuro, rendementPct, isSchatting })
@@ -226,6 +231,11 @@ function berekenMaandData(
   let portfolioBeginWaarde = 0
   let portfolioEindWaarde = 0
   let isSchatting = false
+  // Waar voor de lopende maand geen live koers beschikbaar was: dan valt eindKoers
+  // terug op de laatst bekende (carried-forward) maand-eindkoers, gelijk aan de
+  // beginkoers — dat geeft een schijnbaar "+0,00%" i.p.v. een echte meting. Zo'n
+  // maand mag geen percentage tonen (zie rendementPct hieronder).
+  let huidigeMaandOnbetrouwbaar = false
   const positieDetails: PositieMaandDetail[] = []
 
   // Union: posities aan begin ÉN eind van de maand (dekt ook volledige verkopen binnen de maand)
@@ -243,6 +253,7 @@ function berekenMaandData(
 
     let eindKoers: number
     let eindIsSchatting: boolean
+    let eindLiveMislukt = false
     if (isHuidigeMaand) {
       const symbol = ISIN_MAP[isin]
       const live = symbol ? koersen[symbol]?.price : undefined
@@ -250,6 +261,7 @@ function berekenMaandData(
         eindKoers = live
       } else {
         eindKoers = resolveKoers(priceMap, thisKey).koers
+        eindLiveMislukt = true
       }
       eindIsSchatting = true // lopende maand — geen echte maand-eindkoers
     } else {
@@ -260,6 +272,7 @@ function berekenMaandData(
 
     const schat = beginRes.isSchatting || eindIsSchatting
     if (schat) isSchatting = true
+    if (eindLiveMislukt) huidigeMaandOnbetrouwbaar = true
 
     const waardeBegin = aantalBegin * beginRes.koers
     const waardeEind  = aantalEind * eindKoers
@@ -269,7 +282,7 @@ function berekenMaandData(
       .reduce((s, t) => s + t.totaal, 0)
 
     const rendementEuro = waardeEind - waardeBegin - positieNettoInleg
-    const rendementPct  = waardeBegin > 0 ? (rendementEuro / waardeBegin) * 100 : null
+    const rendementPct  = (waardeBegin > 0 && !eindLiveMislukt) ? (rendementEuro / waardeBegin) * 100 : null
 
     totalRendementEuro += rendementEuro
     portfolioBeginWaarde += waardeBegin
@@ -289,7 +302,7 @@ function berekenMaandData(
     })
   }
 
-  const rendementPct = portfolioBeginWaarde > 0
+  const rendementPct = (portfolioBeginWaarde > 0 && !huidigeMaandOnbetrouwbaar)
     ? (totalRendementEuro / portfolioBeginWaarde) * 100
     : null
 

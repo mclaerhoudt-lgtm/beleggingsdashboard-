@@ -77,7 +77,7 @@ export function Overzicht({
   }), [historie, settings.inflatie, eersteJaar])
 
   const returnData = useMemo(() => historie
-    .filter(d => d.rendementEuro !== 0)
+    .filter((d): d is typeof d & { rendementPct: number } => d.rendementEuro !== 0 && d.rendementPct != null)
     .map(d => {
       const [y, m] = d.key.split('-')
       return { label: `${MAANDEN[parseInt(m) - 1]} '${y.slice(2)}`, rendement: parseFloat(d.rendementPct.toFixed(2)) }

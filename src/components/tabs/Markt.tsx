@@ -145,7 +145,8 @@ export function Markt({ transactions, koersen, koersHistorie }: Props) {
           {selectedProduct.length > 50 ? selectedProduct.slice(0, 48) + '…' : selectedProduct}
         </h2>
         <p className="text-xs text-gray-400 mb-4">
-          De koers van {selectedProduct} aan het einde van elke maand, over de beschikbare historie (circa 5 jaar via Yahoo Finance).
+          De koers van {selectedProduct} aan het einde van elke afgesloten maand, over de beschikbare historie (circa 5 jaar via Yahoo Finance).
+          De lopende maand staat hier bewust nog niet in — die volg je live via de koerscijfers hierboven.
         </p>
         <MarketChart data={chartData} name={selectedProduct} />
       </div>
