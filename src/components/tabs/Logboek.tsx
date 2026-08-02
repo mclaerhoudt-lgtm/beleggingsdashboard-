@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine,
 } from 'recharts'
@@ -13,6 +13,7 @@ import type {
 } from '../../utils/calculations'
 import type { Transaction, AccountEvent, ManualEntry, KoersHistorie, KoersCache } from '../../types'
 import { useLocalStorage } from '../../hooks/useLocalStorage'
+import { COLORS } from '../../theme'
 
 const VUSA_ISIN = 'IE00B3XXRP09'
 const PERIODE_KEY = 'bdash_logboek_periode'
@@ -309,15 +310,15 @@ function OpbouwChart({ data }: { data: Array<{ label: string; cumPct: number }> 
       <AreaChart data={data} margin={{ top: 5, right: 8, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id="gradYtd" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#3266ad" stopOpacity={0.3} />
-            <stop offset="95%" stopColor="#3266ad" stopOpacity={0} />
+            <stop offset="5%" stopColor={COLORS.primary} stopOpacity={0.3} />
+            <stop offset="95%" stopColor={COLORS.primary} stopOpacity={0} />
           </linearGradient>
         </defs>
         <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
         <YAxis tickFormatter={v => `${Number(v).toFixed(0)}%`} tick={{ fontSize: 10 }} width={36} />
         <Tooltip formatter={(v) => [`${Number(v).toFixed(2)}%`, 'Cumulatief']} />
-        <ReferenceLine y={0} stroke="#9ca3af" />
-        <Area type="monotone" dataKey="cumPct" stroke="#3266ad" fill="url(#gradYtd)" strokeWidth={2} dot={false} />
+        <ReferenceLine y={0} stroke={COLORS.axisMuted} />
+        <Area type="monotone" dataKey="cumPct" stroke={COLORS.primary} fill="url(#gradYtd)" strokeWidth={2} dot={false} />
       </AreaChart>
     </ResponsiveContainer>
   )
@@ -562,6 +563,13 @@ export function Logboek({ transactions, manualEntries, koersHistorie, koersen }:
     setSelectedMonth(null)
   }
 
+  // Scrolt de actieve periode-chip in beeld — belangrijk op smalle schermen waar
+  // niet alle chips tegelijk passen (bv. na het openen op een jaar dat verderop staat).
+  const activeChipRef = useRef<HTMLButtonElement | null>(null)
+  useEffect(() => {
+    activeChipRef.current?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' })
+  }, [periode])
+
   const alleMaandenData = useMemo(
     () => calcAlleMaandenData(transactions, koersHistorie, koersen),
     [transactions, koersHistorie, koersen],
@@ -609,10 +617,22 @@ export function Logboek({ transactions, manualEntries, koersHistorie, koersen }:
         <h2 className="text-xl font-bold text-gray-800 dark:text-white">
           {periode === 'all-time' ? 'All-time' : periode}
         </h2>
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide [mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)]">
+          <button
+            ref={periode === 'all-time' ? activeChipRef : undefined}
+            onClick={() => kiesPeriode('all-time')}
+            className={`shrink-0 px-4 py-2 rounded-xl text-sm font-semibold border transition-colors min-h-[44px] ${
+              periode === 'all-time'
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-blue-300'
+            }`}
+          >
+            All-time
+          </button>
           {years.map(y => (
             <button
               key={y}
+              ref={periode === y ? activeChipRef : undefined}
               onClick={() => kiesPeriode(y)}
               className={`shrink-0 px-4 py-2 rounded-xl text-sm font-medium border transition-colors min-h-[44px] ${
                 periode === y
@@ -623,16 +643,6 @@ export function Logboek({ transactions, manualEntries, koersHistorie, koersen }:
               {y}
             </button>
           ))}
-          <button
-            onClick={() => kiesPeriode('all-time')}
-            className={`shrink-0 px-4 py-2 rounded-xl text-sm font-medium border transition-colors min-h-[44px] ${
-              periode === 'all-time'
-                ? 'bg-blue-600 text-white border-blue-600'
-                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-blue-300'
-            }`}
-          >
-            All-time
-          </button>
         </div>
       </div>
 

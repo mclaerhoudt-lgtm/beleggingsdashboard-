@@ -2,6 +2,28 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* DEGIRO-achtige huisstijl: één herkenbare blauwe accent, near-black tekst.
+   Dit remapt Tailwinds ingebouwde "blue"-schaal zodat elke bestaande
+   bg-blue-*/text-blue-*/border-blue-* klasse in de app automatisch de nieuwe
+   accentkleur krijgt, zonder componenten één voor één aan te passen.
+   Voor recharts/inline styles (die geen Tailwind-classes kunnen lezen) staan
+   dezelfde hex-waarden in src/theme.ts — die twee moeten in sync blijven. */
+@theme {
+  --color-blue-50:  #e8f0fe;
+  --color-blue-100: #d2e3fc;
+  --color-blue-200: #aecbfa;
+  --color-blue-300: #8ab4f8;
+  --color-blue-400: #669df6;
+  --color-blue-500: #4285f4;
+  --color-blue-600: #1a73e8;
+  --color-blue-700: #1557b0;
+  --color-blue-800: #103f80;
+  --color-blue-900: #0b2e63;
+  --color-blue-950: #071b3d;
+
+  --color-gray-900: #202124;
+}
+
 @layer base {
   * {
     box-sizing: border-box;

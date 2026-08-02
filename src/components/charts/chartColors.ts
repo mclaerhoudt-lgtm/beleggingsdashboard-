@@ -1,8 +1,10 @@
+import { COLORS } from '../../theme'
+
 // ─── Brand colours ────────────────────────────────────────────────────────────
 export const CHART_COLORS = {
-  nominaal:  '#3266ad',
-  naBox3:    '#d85a30',
-  reeel:     '#1d9e75',
-  ingelegd:  '#888780',
-  belasting: '#d85a30',
+  nominaal:  COLORS.primary,
+  naBox3:    COLORS.warn,
+  reeel:     COLORS.secondary,
+  ingelegd:  COLORS.axisMuted,
+  belasting: COLORS.warn,
 }

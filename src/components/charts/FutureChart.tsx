@@ -5,9 +5,10 @@ import {
 import { formatEuro } from '../../utils/formatters'
 import type { ToekomstPunt, VerhoogMoment } from '../../types'
 import { CHART_COLORS } from './chartColors'
+import { COLORS, CATEGORICAL_COLORS } from '../../theme'
 
-const FASE_BG   = ['#3266ad', '#1d9e75', '#7c3aed', '#d85a30']
-const FASE_TEXT = ['#3266ad', '#1d9e75', '#7c3aed', '#d85a30']
+const FASE_BG   = CATEGORICAL_COLORS.slice(0, 4)
+const FASE_TEXT = CATEGORICAL_COLORS.slice(0, 4)
 
 interface Props {
   data: ToekomstPunt[]
@@ -136,7 +137,7 @@ export function FutureChart({ data, verhoogmomenten = [], selectedYear, onYearCl
             </linearGradient>
           </defs>
 
-          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+          <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
 
           {/* ── Fase background areas — rendered first so data lines draw on top ── */}
           {phases.map(ph => (
@@ -184,9 +185,9 @@ export function FutureChart({ data, verhoogmomenten = [], selectedYear, onYearCl
           {selectedYear && (
             <ReferenceLine
               x={selectedYear}
-              stroke="#1f2937"
+              stroke={COLORS.ink}
               strokeWidth={2}
-              label={{ value: '▼', position: 'top', fontSize: 12, fill: '#1f2937' }}
+              label={{ value: '▼', position: 'top', fontSize: 12, fill: COLORS.ink }}
             />
           )}
 

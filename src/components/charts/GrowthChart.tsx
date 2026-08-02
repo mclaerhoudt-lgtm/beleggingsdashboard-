@@ -2,6 +2,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 import { formatEuro } from '../../utils/formatters'
+import { COLORS } from '../../theme'
 
 interface DataPoint {
   label: string
@@ -26,7 +27,7 @@ export function GrowthChart({ data }: Props) {
   return (
     <ResponsiveContainer width="100%" height={300}>
       <LineChart data={data} margin={{ top: 5, right: 8, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+        <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
         <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
         <YAxis
           tickFormatter={fmtY}
@@ -36,9 +37,9 @@ export function GrowthChart({ data }: Props) {
         />
         <Tooltip formatter={(v) => formatEuro(Number(v))} />
         <Legend />
-        <Line type="monotone" dataKey="waarde"   name="Waarde"  stroke="#2563eb" strokeWidth={2} dot={false} />
-        <Line type="monotone" dataKey="ingelegd" name="Ingelegd" stroke="#9ca3af" strokeWidth={2} dot={false} strokeDasharray="5 5" />
-        <Line type="monotone" dataKey="reeel"    name="Reëel"   stroke="#10b981" strokeWidth={2} dot={false} />
+        <Line type="monotone" dataKey="waarde"   name="Waarde"  stroke={COLORS.primary} strokeWidth={2} dot={false} />
+        <Line type="monotone" dataKey="ingelegd" name="Ingelegd" stroke={COLORS.axisMuted} strokeWidth={2} dot={false} strokeDasharray="5 5" />
+        <Line type="monotone" dataKey="reeel"    name="Reëel"   stroke={COLORS.secondary} strokeWidth={2} dot={false} />
       </LineChart>
     </ResponsiveContainer>
   )

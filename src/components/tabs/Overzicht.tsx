@@ -6,13 +6,14 @@ import { ReturnChart } from '../charts/ReturnChart'
 import { formatEuro, formatPct, MAANDEN } from '../../utils/formatters'
 import { calcPortfolioHistorie, calcReeel, KORTE_NAAM } from '../../utils/calculations'
 import type { Settings, Transaction, AccountEvent, ManualEntry, Position, KoersHistorie, KoersCache } from '../../types'
+import { COLORS } from '../../theme'
 
 // Per-ISIN dot colour (brand palette)
 const ISIN_KLEUR: Record<string, string> = {
-  'IE00B3XXRP09': '#3266ad',
-  'NL0010273215': '#1d9e75',
+  'IE00B3XXRP09': COLORS.primary,
+  'NL0010273215': COLORS.secondary,
 }
-const FALLBACK_KLEUR = '#888780'
+const FALLBACK_KLEUR = COLORS.axisMuted
 
 interface Props {
   portfolioValue: number

@@ -1,6 +1,7 @@
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Cell,
 } from 'recharts'
+import { COLORS } from '../../theme'
 
 interface DataPoint {
   label: string
@@ -16,7 +17,7 @@ export function ReturnChart({ data }: Props) {
   return (
     <ResponsiveContainer width="100%" height={200}>
       <BarChart data={data} margin={{ top: 5, right: 8, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+        <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} vertical={false} />
         <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
         <YAxis
           tickFormatter={v => `${Number(v).toFixed(0)}%`}
@@ -25,10 +26,10 @@ export function ReturnChart({ data }: Props) {
           tickMargin={4}
         />
         <Tooltip formatter={(v) => [`${Number(v).toFixed(2)}%`, 'Rendement']} />
-        <ReferenceLine y={0} stroke="#6b7280" />
+        <ReferenceLine y={0} stroke={COLORS.axisMuted} />
         <Bar dataKey="rendement" radius={[3, 3, 0, 0]} maxBarSize={20}>
           {data.map((d, i) => (
-            <Cell key={i} fill={d.rendement >= 0 ? '#22c55e' : '#ef4444'} />
+            <Cell key={i} fill={d.rendement >= 0 ? COLORS.positive : COLORS.negative} />
           ))}
         </Bar>
       </BarChart>

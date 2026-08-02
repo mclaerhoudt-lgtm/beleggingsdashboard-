@@ -4,6 +4,7 @@ import {
 } from 'recharts'
 import { Tooltip } from 'recharts'
 import { formatEuro } from '../../utils/formatters'
+import { COLORS } from '../../theme'
 
 export interface MarketDataPoint {
   label: string
@@ -68,7 +69,7 @@ function BestWorstLabel(props: {
       textAnchor="middle"
       fontSize={9}
       fontWeight={600}
-      fill={d.isBest ? '#16a34a' : '#dc2626'}
+      fill={d.isBest ? COLORS.positive : COLORS.negative}
     >
       {isPos ? '+' : ''}{(value as number).toFixed(1)}%
     </text>
@@ -85,7 +86,7 @@ export function MarketChart({ data, name }: Props) {
   return (
     <ResponsiveContainer width="100%" height={360}>
       <ComposedChart data={data} margin={{ top: 20, right: 44, left: 0, bottom: 40 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+        <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
         <XAxis
           dataKey="label"
           tick={{ fontSize: 10 }}
@@ -110,12 +111,12 @@ export function MarketChart({ data, name }: Props) {
           tickMargin={4}
         />
         <Tooltip content={<CustomTooltip />} />
-        <ReferenceLine yAxisId="right" y={0} stroke="#9ca3af" strokeDasharray="3 3" />
+        <ReferenceLine yAxisId="right" y={0} stroke={COLORS.axisMuted} strokeDasharray="3 3" />
         <Bar yAxisId="right" dataKey="rendement" name="Maand %" radius={[3, 3, 0, 0]} barSize={barSize}>
           {data.map((d, i) => (
             <Cell
               key={i}
-              fill={d.isBest ? '#16a34a' : d.isWorst ? '#dc2626' : d.rendement >= 0 ? '#86efac' : '#fca5a5'}
+              fill={d.isBest ? COLORS.positive : d.isWorst ? COLORS.negative : d.rendement >= 0 ? COLORS.positiveLight : COLORS.negativeLight}
             />
           ))}
           <LabelList
@@ -128,7 +129,7 @@ export function MarketChart({ data, name }: Props) {
           type="monotone"
           dataKey="koers"
           name={name}
-          stroke="#2563eb"
+          stroke={COLORS.primary}
           strokeWidth={2}
           dot={false}
           activeDot={{ r: 4 }}

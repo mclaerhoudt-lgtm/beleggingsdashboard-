@@ -1,5 +1,6 @@
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { formatEuro } from '../../utils/formatters'
+import { CATEGORICAL_COLORS } from '../../theme'
 
 interface DataPoint {
   name: string
@@ -9,8 +10,6 @@ interface DataPoint {
 interface Props {
   data: DataPoint[]
 }
-
-const COLORS = ['#2563eb', '#7c3aed', '#db2777', '#ea580c', '#16a34a', '#0891b2']
 
 export function AllocChart({ data }: Props) {
   if (data.length === 0) return null
@@ -28,7 +27,7 @@ export function AllocChart({ data }: Props) {
           labelLine={false}
         >
           {data.map((_, i) => (
-            <Cell key={i} fill={COLORS[i % COLORS.length]} />
+            <Cell key={i} fill={CATEGORICAL_COLORS[i % CATEGORICAL_COLORS.length]} />
           ))}
         </Pie>
         <Tooltip formatter={(v) => formatEuro(Number(v))} />
