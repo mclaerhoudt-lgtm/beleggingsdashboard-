@@ -4,15 +4,7 @@ import {
 } from 'recharts'
 import { formatEuro } from '../../utils/formatters'
 import type { ToekomstPunt, VerhoogMoment } from '../../types'
-
-// ─── Brand colours ────────────────────────────────────────────────────────────
-export const CHART_COLORS = {
-  nominaal:  '#3266ad',
-  naBox3:    '#d85a30',
-  reeel:     '#1d9e75',
-  ingelegd:  '#888780',
-  belasting: '#d85a30',
-}
+import { CHART_COLORS } from './chartColors'
 
 const FASE_BG   = ['#3266ad', '#1d9e75', '#7c3aed', '#d85a30']
 const FASE_TEXT = ['#3266ad', '#1d9e75', '#7c3aed', '#d85a30']

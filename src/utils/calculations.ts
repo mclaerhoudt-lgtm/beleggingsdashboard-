@@ -1,6 +1,7 @@
 import type {
   Transaction,
   AccountEvent,
+  ManualEntry,
   Position,
   ToekomstParams,
   ToekomstPunt,
@@ -8,49 +9,32 @@ import type {
 } from '../types'
 import { ISIN_SYMBOLS as ISIN_MAP } from '../types'
 
-// Month-end reference prices keyed by ISIN → 'YYYY-MM'
-export const HISTORISCHE_KOERSEN: Record<string, Record<string, number>> = {
-  'IE00B3XXRP09': {
-    '2024-07': 97.00,  '2024-08': 103.57, '2024-09': 105.68,
-    '2024-10': 108.65, '2024-11': 111.65, '2024-12': 111.74,
-    '2025-01': 111.44, '2025-02': 109.57, '2025-03': 106.20,
-    '2025-04': 101.50, '2025-05': 104.30, '2025-06': 107.80,
-    '2025-07': 103.80, '2025-08': 103.57, '2025-09': 105.68,
-    '2025-10': 108.65, '2025-11': 111.65, '2025-12': 111.74,
-    '2026-01': 111.44, '2026-02': 109.57, '2026-03': 109.57,
-    '2026-04': 112.50, '2026-05': 123.69,
-  },
-  'NL0010273215': {
-    '2024-07': 858.80,  '2024-08': 820.50,  '2024-09': 795.20,
-    '2024-10': 745.00,  '2024-11': 680.50,  '2024-12': 710.20,
-    '2025-01': 750.80,  '2025-02': 780.30,  '2025-03': 820.60,
-    '2025-04': 780.20,  '2025-05': 810.50,  '2025-06': 850.20,
-    '2025-07': 920.40,  '2025-08': 980.70,  '2025-09': 1050.20,
-    '2025-10': 1100.50, '2025-11': 1180.30, '2025-12': 1220.60,
-    '2026-01': 1260.40, '2026-02': 1280.20, '2026-03': 1280.20,
-    '2026-04': 1300.20, '2026-05': 1411.00,
-  },
-}
-
 // ─── types for Logboek ───────────────────────────────────────────────────────
 
 export interface PositieMaandDetail {
   isin: string
   product: string
+  aantalBeginMaand: number
   aantalEindMaand: number
   koersBeginMaand: number
   koersEindMaand: number
-  rendementEuro: number
-  rendementPct: number
+  nettoInleg: number          // cash flow into this position this month (buys − sells, incl. fees)
+  rendementEuro: number       // waarde_eind − waarde_begin − nettoInleg (koersrendement, TWR-basis)
+  rendementPct: number | null // null wanneer waarde_begin = 0 (geen zinvolle basis, bv. instapmaand)
+  isSchatting: boolean        // koers is carried-forward of een live tussentijdse koers, geen echte maand-eindkoers
 }
 
 export interface MaandData {
   rendementEuro: number
-  rendementPct: number
+  rendementPct: number | null // null wanneer waardeBeginMaand = 0 (geen zinvolle basis)
+  nettoInleg: number          // cash flow in/uit posities deze maand (buys − sells)
+  waardeBeginMaand: number
   waardeEindeMaand: number
   aankopen: Transaction[]
+  verkopen: Transaction[]
   hasPosities: boolean  // had open positions this month (including months without purchases)
   hadAankopen: boolean
+  isSchatting: boolean   // lopende maand en/of carried-forward koers gebruikt voor minstens 1 positie
   positieDetails: PositieMaandDetail[]
 }
 
@@ -62,6 +46,22 @@ function mkKey(year: number, month: number): string {
 
 function prevKey(year: number, month: number): { y: number; m: number } {
   return month === 0 ? { y: year - 1, m: 11 } : { y: year, m: month - 1 }
+}
+
+// Looks up the close price for `key` ('YYYY-MM'). If that exact month is
+// missing from koersHistorie, carries forward the most recent earlier month
+// so a data gap never silently produces a 0 or a skipped month.
+function resolveKoers(
+  priceMap: Record<string, number> | undefined,
+  key: string,
+): { koers: number; isSchatting: boolean } {
+  if (!priceMap) return { koers: 0, isSchatting: true }
+  if (priceMap[key] != null) return { koers: priceMap[key], isSchatting: false }
+  const eerdereKeys = Object.keys(priceMap).filter(k => k <= key).sort()
+  if (eerdereKeys.length > 0) {
+    return { koers: priceMap[eerdereKeys[eerdereKeys.length - 1]], isSchatting: true }
+  }
+  return { koers: 0, isSchatting: true }
 }
 
 // Cumulative position snapshot at the last moment of `maxDate`
@@ -85,138 +85,82 @@ export const KORTE_NAAM: Record<string, string> = {
   'NL0010273215': 'ASML',
 }
 
-// ─── yearly per-position return ───────────────────────────────────────────────
-
-export interface JaarPositieRendement {
-  isin: string
-  product: string
-  aantalEindJaar: number
-  koersBeginJaar: number  // January of that year (or earliest month in HISTORISCHE_KOERSEN)
-  koersEindJaar: number   // December (completed year) or latest available (current year)
-  rendementEuro: number
-  rendementPct: number
-}
-
-export function calcJaarPositieRendementen(
-  transactions: Transaction[],
-  year: number,
-): JaarPositieRendement[] {
-  const now = new Date()
-  const isCurrentYear = year === now.getFullYear()
-
-  const eindDatum = isCurrentYear
-    ? now
-    : new Date(year, 11, 31, 23, 59, 59)
-
-  const posities = positiesOpMoment(transactions, eindDatum)
-
-  return Object.entries(posities)
-    .map(([isin, { product, aantal }]) => {
-      const priceMap = HISTORISCHE_KOERSEN[isin] ?? {}
-      const allKeys  = Object.keys(priceMap).sort()
-      const yearKeys = allKeys.filter(k => k.startsWith(`${year}-`))
-
-      // Begin: January price, or first available month that year
-      const koersBeginJaar = priceMap[`${year}-01`]
-        ?? (yearKeys.length > 0 ? priceMap[yearKeys[0]] : 0)
-        ?? 0
-
-      // End: December (past year) or most-recent available (current year)
-      let koersEindJaar: number
-      if (!isCurrentYear) {
-        koersEindJaar = priceMap[`${year}-12`]
-          ?? (yearKeys.length > 0 ? priceMap[yearKeys[yearKeys.length - 1]] : 0)
-          ?? 0
-      } else {
-        const curKey = `${year}-${String(now.getMonth() + 1).padStart(2, '0')}`
-        const valid  = allKeys.filter(k => k <= curKey)
-        koersEindJaar = valid.length > 0 ? priceMap[valid[valid.length - 1]] ?? 0 : 0
-      }
-
-      if (!koersBeginJaar || !koersEindJaar) return null
-
-      const rendementPct  = ((koersEindJaar - koersBeginJaar) / koersBeginJaar) * 100
-      const rendementEuro = (koersEindJaar - koersBeginJaar) * aantal
-
-      return { isin, product, aantalEindJaar: aantal, koersBeginJaar, koersEindJaar, rendementEuro, rendementPct }
-    })
-    .filter((r): r is JaarPositieRendement => r !== null)
-}
-
-// CAGR of the S&P500 ETF from the first to the last price in HISTORISCHE_KOERSEN.
-// Used as a data-driven suggestion in the Toekomst calculator.
-export function calcGemiddeldJaarRendement(): number | null {
-  const priceMap = HISTORISCHE_KOERSEN['IE00B3XXRP09']
-  if (!priceMap) return null
-
-  const keys = Object.keys(priceMap).sort()
-  if (keys.length < 3) return null  // need at least a quarter of data
-
-  const firstKey   = keys[0]
-  const lastKey    = keys[keys.length - 1]
-  const firstPrice = priceMap[firstKey]
-  const lastPrice  = priceMap[lastKey]
-  if (!firstPrice || !lastPrice || firstPrice <= 0) return null
-
-  const [fy, fm] = firstKey.split('-').map(Number)
-  const [ly, lm] = lastKey.split('-').map(Number)
-  const months = (ly - fy) * 12 + (lm - fm)
-  if (months < 3) return null
-
-  const cagr = (Math.pow(lastPrice / firstPrice, 12 / months) - 1) * 100
-  return Math.round(cagr * 10) / 10  // one decimal
-}
-
 // ─── exports ─────────────────────────────────────────────────────────────────
 
 // Timeline of monthly portfolio snapshots from first transaction to today.
 // Used by Overzicht for GrowthChart + ReturnChart.
 export interface PortfolioMaand {
   key: string           // YYYY-MM
-  waarde: number        // end-of-month portfolio value (from HISTORISCHE_KOERSEN)
+  waarde: number        // end-of-month portfolio value (current month: live price approximation)
   ingelegd: number      // cumulative invested (sum |totaal| for buys)
-  rendementEuro: number // (koers_eind − koers_begin) × aantal for all positions
-  rendementPct: number  // rendementEuro / prevWaarde × 100
+  rendementEuro: number // waarde_eind − waarde_begin − nettoInleg_deze_maand (koersrendement)
+  rendementPct: number  // rendementEuro / prevWaarde × 100 (0 when there's no prior baseline)
+  isSchatting: boolean  // lopende maand en/of carried-forward koers gebruikt
 }
 
-export function calcPortfolioHistorie(transactions: Transaction[]): PortfolioMaand[] {
+export function calcPortfolioHistorie(
+  transactions: Transaction[],
+  koersHistorie: Record<string, Record<string, number>>,
+  koersen: KoersCache,
+): PortfolioMaand[] {
   if (transactions.length === 0) return []
 
   const sorted = [...transactions].sort((a, b) => a.datum.localeCompare(b.datum))
   const firstDate = new Date(sorted[0].datum)
   const now = new Date()
+  const huidigeMaandKey = mkKey(now.getFullYear(), now.getMonth())
 
   const months: PortfolioMaand[] = []
   let prevWaarde = 0
   const cursor = new Date(firstDate.getFullYear(), firstDate.getMonth(), 1)
 
-  for (let safety = 0; cursor <= now && safety < 300; safety++) {
+  for (let safety = 0; cursor <= now && safety < 600; safety++) {
     const year  = cursor.getFullYear()
     const month = cursor.getMonth()
     const thisKey = mkKey(year, month)
-    const { y: py, m: pm } = prevKey(year, month)
-    const prevK = mkKey(py, pm)
-    const eindDatum = new Date(year, month + 1, 0, 23, 59, 59)
+    const isHuidigeMaand = thisKey === huidigeMaandKey
+    const eindDatum = isHuidigeMaand ? now : new Date(year, month + 1, 0, 23, 59, 59)
+    const beginDatum = new Date(year, month, 1, 0, 0, 0)
 
     const pos = positiesOpMoment(transactions, eindDatum)
 
     let waarde = 0
-    let rendementEuro = 0
+    let isSchatting = false
     for (const [isin, { aantal }] of Object.entries(pos)) {
-      const koersEind  = HISTORISCHE_KOERSEN[isin]?.[thisKey] ?? 0
-      const koersBegin = HISTORISCHE_KOERSEN[isin]?.[prevK]   ?? 0
-      waarde += aantal * koersEind
-      if (koersEind > 0 && koersBegin > 0) rendementEuro += (koersEind - koersBegin) * aantal
+      const priceMap = koersHistorie[isin]
+      let koers: number
+
+      if (isHuidigeMaand) {
+        const symbol = ISIN_MAP[isin]
+        const live = symbol ? koersen[symbol]?.price : undefined
+        if (live && live > 0) {
+          koers = live
+        } else {
+          koers = resolveKoers(priceMap, thisKey).koers
+        }
+        isSchatting = true // lopende maand — nooit een echte maand-eindkoers
+      } else {
+        const r = resolveKoers(priceMap, thisKey)
+        koers = r.koers
+        if (r.isSchatting) isSchatting = true
+      }
+
+      waarde += aantal * koers
     }
 
     const ingelegd = transactions
       .filter(t => t.aantal > 0 && new Date(t.datum) <= eindDatum)
       .reduce((s, t) => s + Math.abs(t.totaal), 0)
 
-    const rendementPct = prevWaarde > 0 ? (rendementEuro / prevWaarde) * 100 : 0
+    const nettoInlegMaand = -transactions
+      .filter(t => { const d = new Date(t.datum); return d >= beginDatum && d <= eindDatum })
+      .reduce((s, t) => s + t.totaal, 0)
+
+    const rendementEuro = waarde - prevWaarde - nettoInlegMaand
+    const rendementPct  = prevWaarde > 0 ? (rendementEuro / prevWaarde) * 100 : 0
 
     if (waarde > 0) {
-      months.push({ key: thisKey, waarde, ingelegd, rendementEuro, rendementPct })
+      months.push({ key: thisKey, waarde, ingelegd, rendementEuro, rendementPct, isSchatting })
       prevWaarde = waarde
     }
 
@@ -226,79 +170,422 @@ export function calcPortfolioHistorie(transactions: Transaction[]): PortfolioMaa
   return months
 }
 
-export function calcMaandData(
+// Time-weighted-return-style monthly breakdown: isolates koersrendement from
+// stortingen/aankopen door de cashflow van de maand af te trekken vóór het % te bepalen.
+//   rendementEuro = waarde_eind − waarde_begin − nettoInleg
+//   rendementPct  = rendementEuro / waarde_begin × 100   (null als waarde_begin = 0)
+function berekenMaandData(
   transactions: Transaction[],
   year: number,
-): Record<number, MaandData> {
-  const result: Record<number, MaandData> = {}
+  m: number,
+  koersHistorie: Record<string, Record<string, number>>,
+  koersen: KoersCache,
+): MaandData {
+  const now = new Date()
+  const thisKey = mkKey(year, m)
+  const huidigeMaandKey = mkKey(now.getFullYear(), now.getMonth())
+  const isHuidigeMaand = thisKey === huidigeMaandKey
 
-  for (let m = 0; m < 12; m++) {
-    // Last instant of this month / last instant of previous month
-    const eindDitMoment = new Date(year, m + 1, 0, 23, 59, 59)
-    const { y: py, m: pm } = prevKey(year, m)
-    const eindVorigMoment = new Date(py, pm + 1, 0, 23, 59, 59)
-
-    const positiesEind  = positiesOpMoment(transactions, eindDitMoment)
-    const positiesVorig = positiesOpMoment(transactions, eindVorigMoment)
-
-    const hasPosities = Object.keys(positiesEind).length > 0
-    const thisKey = mkKey(year, m)
-    const prevK   = mkKey(py, pm)
-
-    const aankopen = transactions.filter(t => {
-      const d = new Date(t.datum)
-      return d.getFullYear() === year && d.getMonth() === m && t.aantal > 0
-    })
-
-    let totalRendementEuro = 0
-    let portfolioBeginWaarde = 0
-    let portfolioEindWaarde = 0
-    const positieDetails: PositieMaandDetail[] = []
-
-    for (const [isin, { product, aantal }] of Object.entries(positiesEind)) {
-      const koersEind  = HISTORISCHE_KOERSEN[isin]?.[thisKey] ?? 0
-      const koersBegin = HISTORISCHE_KOERSEN[isin]?.[prevK]   ?? 0
-      const aantalVorig = positiesVorig[isin]?.aantal ?? 0
-
-      // Use the user-specified formula: (koers_eind - koers_begin) × aantal_eind
-      const rendementEuro = koersEind > 0 && koersBegin > 0
-        ? (koersEind - koersBegin) * aantal
-        : 0
-      const rendementPct = koersBegin > 0
-        ? ((koersEind - koersBegin) / koersBegin) * 100
-        : 0
-
-      totalRendementEuro += rendementEuro
-      portfolioBeginWaarde += aantalVorig * koersBegin
-      portfolioEindWaarde  += aantal * koersEind
-
-      positieDetails.push({
-        isin,
-        product,
-        aantalEindMaand: aantal,
-        koersBeginMaand: koersBegin,
-        koersEindMaand: koersEind,
-        rendementEuro,
-        rendementPct,
-      })
-    }
-
-    const rendementPct = portfolioBeginWaarde > 0
-      ? (totalRendementEuro / portfolioBeginWaarde) * 100
-      : 0
-
-    result[m] = {
-      rendementEuro: totalRendementEuro,
-      rendementPct,
-      waardeEindeMaand: portfolioEindWaarde,
-      aankopen,
-      hasPosities,
-      hadAankopen: aankopen.length > 0,
-      positieDetails,
+  // Toekomstige maand — nog niet gebeurd, ongeacht welke posities er "op dat moment" al zouden bestaan
+  if (new Date(year, m, 1) > now) {
+    return {
+      rendementEuro: 0, rendementPct: null, nettoInleg: 0,
+      waardeBeginMaand: 0, waardeEindeMaand: 0,
+      aankopen: [], verkopen: [],
+      hasPosities: false, hadAankopen: false, isSchatting: false,
+      positieDetails: [],
     }
   }
 
+  // Last instant of this month (or "now" if still ongoing) / last instant of previous month
+  const eindDitMoment = isHuidigeMaand ? now : new Date(year, m + 1, 0, 23, 59, 59)
+  const { y: py, m: pm } = prevKey(year, m)
+  const eindVorigMoment = new Date(py, pm + 1, 0, 23, 59, 59)
+  const beginDitMoment  = new Date(year, m, 1, 0, 0, 0)
+  const prevK = mkKey(py, pm)
+
+  const positiesEind  = positiesOpMoment(transactions, eindDitMoment)
+  const positiesVorig = positiesOpMoment(transactions, eindVorigMoment)
+  const hasPosities = Object.keys(positiesEind).length > 0
+
+  const aankopen = transactions.filter(t => {
+    const d = new Date(t.datum)
+    return d.getFullYear() === year && d.getMonth() === m && t.aantal > 0
+  })
+  const verkopen = transactions.filter(t => {
+    const d = new Date(t.datum)
+    return d.getFullYear() === year && d.getMonth() === m && t.aantal < 0
+  })
+  const maandTransacties = transactions.filter(t => {
+    const d = new Date(t.datum)
+    return d >= beginDitMoment && d <= eindDitMoment
+  })
+  const nettoInlegMaand = -maandTransacties.reduce((s, t) => s + t.totaal, 0)
+
+  let totalRendementEuro = 0
+  let portfolioBeginWaarde = 0
+  let portfolioEindWaarde = 0
+  let isSchatting = false
+  const positieDetails: PositieMaandDetail[] = []
+
+  // Union: posities aan begin ÉN eind van de maand (dekt ook volledige verkopen binnen de maand)
+  const isins = new Set([...Object.keys(positiesEind), ...Object.keys(positiesVorig)])
+
+  for (const isin of isins) {
+    const eindInfo  = positiesEind[isin]
+    const vorigInfo = positiesVorig[isin]
+    const product = eindInfo?.product ?? vorigInfo?.product ?? ''
+    const aantalEind  = eindInfo?.aantal ?? 0
+    const aantalBegin = vorigInfo?.aantal ?? 0
+
+    const priceMap = koersHistorie[isin]
+    const beginRes = resolveKoers(priceMap, prevK)
+
+    let eindKoers: number
+    let eindIsSchatting: boolean
+    if (isHuidigeMaand) {
+      const symbol = ISIN_MAP[isin]
+      const live = symbol ? koersen[symbol]?.price : undefined
+      if (live && live > 0) {
+        eindKoers = live
+      } else {
+        eindKoers = resolveKoers(priceMap, thisKey).koers
+      }
+      eindIsSchatting = true // lopende maand — geen echte maand-eindkoers
+    } else {
+      const r = resolveKoers(priceMap, thisKey)
+      eindKoers = r.koers
+      eindIsSchatting = r.isSchatting
+    }
+
+    const schat = beginRes.isSchatting || eindIsSchatting
+    if (schat) isSchatting = true
+
+    const waardeBegin = aantalBegin * beginRes.koers
+    const waardeEind  = aantalEind * eindKoers
+
+    const positieNettoInleg = -maandTransacties
+      .filter(t => t.isin === isin)
+      .reduce((s, t) => s + t.totaal, 0)
+
+    const rendementEuro = waardeEind - waardeBegin - positieNettoInleg
+    const rendementPct  = waardeBegin > 0 ? (rendementEuro / waardeBegin) * 100 : null
+
+    totalRendementEuro += rendementEuro
+    portfolioBeginWaarde += waardeBegin
+    portfolioEindWaarde  += waardeEind
+
+    positieDetails.push({
+      isin,
+      product,
+      aantalBeginMaand: aantalBegin,
+      aantalEindMaand: aantalEind,
+      koersBeginMaand: beginRes.koers,
+      koersEindMaand: eindKoers,
+      nettoInleg: positieNettoInleg,
+      rendementEuro,
+      rendementPct,
+      isSchatting: schat,
+    })
+  }
+
+  const rendementPct = portfolioBeginWaarde > 0
+    ? (totalRendementEuro / portfolioBeginWaarde) * 100
+    : null
+
+  return {
+    rendementEuro: totalRendementEuro,
+    rendementPct,
+    nettoInleg: nettoInlegMaand,
+    waardeBeginMaand: portfolioBeginWaarde,
+    waardeEindeMaand: portfolioEindWaarde,
+    aankopen,
+    verkopen,
+    hasPosities,
+    hadAankopen: aankopen.length > 0,
+    isSchatting,
+    positieDetails,
+  }
+}
+
+// Alle 12 maanden van één kalenderjaar — gebruikt door het Logboek voor de maandtegels.
+export function calcMaandData(
+  transactions: Transaction[],
+  year: number,
+  koersHistorie: Record<string, Record<string, number>>,
+  koersen: KoersCache,
+): Record<number, MaandData> {
+  const result: Record<number, MaandData> = {}
+  for (let m = 0; m < 12; m++) {
+    result[m] = berekenMaandData(transactions, year, m, koersHistorie, koersen)
+  }
   return result
+}
+
+export interface MaandDataPunt {
+  year: number
+  month: number  // 0-11
+  data: MaandData
+}
+
+// Chronologische reeks van elke maand vanaf de eerste transactie t/m nu — de basis voor
+// het all-time Logboek-overzicht. Herbruikt dezelfde per-maand berekening als calcMaandData,
+// dus een enkel jaar (via naarMaandPunten) en all-time gebruiken exact dezelfde rekenmethode.
+export function calcAlleMaandenData(
+  transactions: Transaction[],
+  koersHistorie: Record<string, Record<string, number>>,
+  koersen: KoersCache,
+): MaandDataPunt[] {
+  if (transactions.length === 0) return []
+
+  const sorted = [...transactions].sort((a, b) => a.datum.localeCompare(b.datum))
+  const firstDate = new Date(sorted[0].datum)
+  const now = new Date()
+
+  const punten: MaandDataPunt[] = []
+  const cursor = new Date(firstDate.getFullYear(), firstDate.getMonth(), 1)
+
+  for (let safety = 0; cursor <= now && safety < 1200; safety++) {
+    const year  = cursor.getFullYear()
+    const month = cursor.getMonth()
+    punten.push({ year, month, data: berekenMaandData(transactions, year, month, koersHistorie, koersen) })
+    cursor.setMonth(cursor.getMonth() + 1)
+  }
+
+  return punten
+}
+
+// Zet het resultaat van calcMaandData (Record<0-11, MaandData> voor één jaar) om naar
+// dezelfde MaandDataPunt[]-vorm als calcAlleMaandenData, zodat één set periode-functies
+// zowel een los jaar als all-time kan verwerken.
+export function naarMaandPunten(maandData: Record<number, MaandData>, year: number): MaandDataPunt[] {
+  return Array.from({ length: 12 }, (_, m) => ({ year, month: m, data: maandData[m] }))
+}
+
+// ─── period aggregation (chained TWR) ─────────────────────────────────────────
+// Werkt op een chronologische MaandDataPunt[] — dezelfde functies bedienen zowel een
+// los jaar (12 punten, via naarMaandPunten) als all-time (alle maanden sinds de start).
+
+function actieveMaandenGesorteerd(punten: MaandDataPunt[]): MaandDataPunt[] {
+  return punten
+    .filter(p => p.data.hasPosities)
+    .sort((a, b) => a.year - b.year || a.month - b.month)
+}
+
+export interface MaandLabel {
+  year: number
+  month: number
+  pct: number
+}
+
+export interface PeriodeRendementResultaat {
+  rendementPct: number | null // geketende TWR: (1+r1)(1+r2)…(1+rn) − 1; null zonder geldige maand
+  rendementEuro: number       // som van maand-€'s — consistent met rendementPct per constructie
+  nettoInleg: number          // netto cashflow (aankopen − verkopen) in de periode
+  totaalKosten: number        // transactiekosten (aankopen + verkopen) in de periode
+  beginWaarde: number
+  eindWaarde: number
+  besteMaand: MaandLabel | null
+  slechtsteMaand: MaandLabel | null
+}
+
+export function calcPeriodeRendement(punten: MaandDataPunt[]): PeriodeRendementResultaat | null {
+  const actief = actieveMaandenGesorteerd(punten)
+  if (actief.length === 0) return null
+
+  let ketting = 1
+  let heeftGeldigePct = false
+  for (const p of actief) {
+    if (p.data.rendementPct != null) {
+      ketting *= (1 + p.data.rendementPct / 100)
+      heeftGeldigePct = true
+    }
+  }
+  const rendementPct = heeftGeldigePct ? (ketting - 1) * 100 : null
+
+  const rendementEuro = actief.reduce((s, p) => s + p.data.rendementEuro, 0)
+  const nettoInleg    = actief.reduce((s, p) => s + p.data.nettoInleg, 0)
+  const totaalKosten  = actief.reduce(
+    (s, p) => s + [...p.data.aankopen, ...p.data.verkopen].reduce((a, t) => a + t.transactiekosten, 0),
+    0,
+  )
+
+  const beginWaarde = actief[0].data.waardeBeginMaand
+  const eindWaarde  = actief[actief.length - 1].data.waardeEindeMaand
+
+  let besteMaand: MaandLabel | null = null
+  let slechtsteMaand: MaandLabel | null = null
+  for (const p of actief) {
+    if (p.data.rendementPct == null) continue
+    if (!besteMaand || p.data.rendementPct > besteMaand.pct) besteMaand = { year: p.year, month: p.month, pct: p.data.rendementPct }
+    if (!slechtsteMaand || p.data.rendementPct < slechtsteMaand.pct) slechtsteMaand = { year: p.year, month: p.month, pct: p.data.rendementPct }
+  }
+
+  // Sanity checks (altijd actief, console.assert is een no-op behalve loggen bij falen):
+  // 1) €-identiteit: eindwaarde − beginwaarde moet gelijk zijn aan koersrendement + netto inleg.
+  const identiteitAfwijking = Math.abs((eindWaarde - beginWaarde) - (rendementEuro + nettoInleg))
+  console.assert(identiteitAfwijking < 0.01, '[calcPeriodeRendement] €-identiteit klopt niet', {
+    eindWaarde, beginWaarde, rendementEuro, nettoInleg,
+  })
+  // 2) Zonder cashflow moet de geketende TWR overeenkomen met de eindpunt-ratio.
+  if (rendementPct != null && Math.abs(nettoInleg) < 0.01 && beginWaarde > 0) {
+    const eindpuntRatio = ((eindWaarde - beginWaarde) / beginWaarde) * 100
+    console.assert(Math.abs(rendementPct - eindpuntRatio) < 0.5, '[calcPeriodeRendement] TWR wijkt af van eindpunt-ratio', {
+      rendementPct, eindpuntRatio,
+    })
+  }
+
+  return { rendementPct, rendementEuro, nettoInleg, totaalKosten, beginWaarde, eindWaarde, besteMaand, slechtsteMaand }
+}
+
+export interface CumulatieveTwrPunt {
+  year: number
+  month: number
+  cumPct: number  // geketende TWR t/m en met deze maand
+}
+
+// Running (chained) TWR per active month — used for the opbouw-lijn in het Logboek.
+export function calcCumulatieveTwr(punten: MaandDataPunt[]): CumulatieveTwrPunt[] {
+  const actief = actieveMaandenGesorteerd(punten)
+
+  let ketting = 1
+  const result: CumulatieveTwrPunt[] = []
+  for (const p of actief) {
+    if (p.data.rendementPct != null) ketting *= (1 + p.data.rendementPct / 100)
+    result.push({ year: p.year, month: p.month, cumPct: (ketting - 1) * 100 })
+  }
+  return result
+}
+
+// ─── per-position return over a period (contributie-gecorrigeerd, sluit aan bij het totaal) ──
+
+export interface JaarPositieRendement {
+  isin: string
+  product: string
+  aantalEindJaar: number
+  koersBeginJaar: number       // koers bij begin van de eerste actieve maand van deze positie in de periode
+  koersEindJaar: number        // koers bij eind van de laatste actieve maand van deze positie in de periode
+  nettoInlegJaar: number       // netto inleg in déze positie in de periode (aankopen − verkopen)
+  rendementEuro: number        // som van maandelijkse (eind − begin − nettoInleg) — Σ over posities = periodetotaal
+  rendementPct: number | null  // geketende maandelijkse TWR voor déze positie; null zonder geldige maand
+}
+
+// Bouwt de per-positie cijfers op uit dezelfde maandelijkse positieDetails die ook het
+// periodetotaal vormen (calcPeriodeRendement) — daardoor tellen de € per positie per
+// constructie op tot het totale koersrendement, en "v/d totaal" tot 100%.
+export function calcPositieRendementen(punten: MaandDataPunt[]): JaarPositieRendement[] {
+  const actief = actieveMaandenGesorteerd(punten)
+
+  interface Acc {
+    product: string
+    koersBeginJaar: number
+    koersEindJaar: number
+    aantalEindJaar: number
+    nettoInlegJaar: number
+    rendementEuro: number
+    ketting: number
+    heeftGeldigePct: boolean
+  }
+  const perIsin: Record<string, Acc> = {}
+
+  for (const p of actief) {
+    for (const pos of p.data.positieDetails) {
+      if (!perIsin[pos.isin]) {
+        perIsin[pos.isin] = {
+          product: pos.product,
+          koersBeginJaar: pos.koersBeginMaand,
+          koersEindJaar: pos.koersEindMaand,
+          aantalEindJaar: pos.aantalEindMaand,
+          nettoInlegJaar: 0,
+          rendementEuro: 0,
+          ketting: 1,
+          heeftGeldigePct: false,
+        }
+      }
+      const e = perIsin[pos.isin]
+      e.koersEindJaar   = pos.koersEindMaand   // laatst gepasseerde maand wint
+      e.aantalEindJaar  = pos.aantalEindMaand
+      e.nettoInlegJaar += pos.nettoInleg
+      e.rendementEuro  += pos.rendementEuro
+      if (pos.rendementPct != null) {
+        e.ketting *= (1 + pos.rendementPct / 100)
+        e.heeftGeldigePct = true
+      }
+    }
+  }
+
+  return Object.entries(perIsin)
+    .map(([isin, e]) => ({
+      isin,
+      product: e.product,
+      aantalEindJaar: e.aantalEindJaar,
+      koersBeginJaar: e.koersBeginJaar,
+      koersEindJaar: e.koersEindJaar,
+      nettoInlegJaar: e.nettoInlegJaar,
+      rendementEuro: e.rendementEuro,
+      rendementPct: e.heeftGeldigePct ? (e.ketting - 1) * 100 : null,
+    }))
+    .sort((a, b) => b.rendementEuro - a.rendementEuro)
+}
+
+export interface PeriodeOverzicht {
+  rendement: PeriodeRendementResultaat
+  posities: JaarPositieRendement[]
+}
+
+// Bundelt periodetotaal + per-positie-uitsplitsing en bewaakt met een dev-check dat ze
+// aansluiten: Σ per-positie-€ moet gelijk zijn aan het totale koersrendement, en Σ "v/d
+// totaal" aan 100%. Werkt zowel voor een los jaar als voor all-time (zelfde punten-array).
+export function calcPeriodeOverzicht(punten: MaandDataPunt[]): PeriodeOverzicht | null {
+  const rendement = calcPeriodeRendement(punten)
+  if (!rendement) return null
+  const posities = calcPositieRendementen(punten)
+
+  const somPositieEuro = posities.reduce((s, p) => s + p.rendementEuro, 0)
+  console.assert(
+    Math.abs(somPositieEuro - rendement.rendementEuro) < 0.01,
+    '[calcPeriodeOverzicht] Σ per-positie-€ ≠ totaal koersrendement-€',
+    { somPositieEuro, totaal: rendement.rendementEuro },
+  )
+
+  if (rendement.rendementEuro !== 0) {
+    const somBijdragePct = posities.reduce((s, p) => s + (p.rendementEuro / rendement.rendementEuro) * 100, 0)
+    console.assert(
+      Math.abs(somBijdragePct - 100) < 0.1,
+      '[calcPeriodeOverzicht] Σ "v/d totaal" ≠ 100%',
+      { somBijdragePct },
+    )
+  }
+
+  return { rendement, posities }
+}
+
+// TWR-benchmark van één ISIN (bv. VUSA) over exact dezelfde actieve maanden als de
+// portefeuille in deze periode — geketend, koers-only, zodat het een eerlijke vergelijking
+// is (geen appels-met-peren door een langere of kortere periode dan de portefeuille zelf).
+export function calcBenchmarkRendement(
+  koersHistorie: Record<string, Record<string, number>>,
+  isin: string,
+  punten: MaandDataPunt[],
+): number | null {
+  const priceMap = koersHistorie[isin]
+  if (!priceMap) return null
+
+  const actief = actieveMaandenGesorteerd(punten)
+  if (actief.length === 0) return null
+
+  let ketting = 1
+  let heeftGeldigeMaand = false
+  for (const p of actief) {
+    const { y: py, m: pm } = prevKey(p.year, p.month)
+    const begin = resolveKoers(priceMap, mkKey(py, pm)).koers
+    const eind  = resolveKoers(priceMap, mkKey(p.year, p.month)).koers
+    if (begin > 0 && eind > 0) {
+      ketting *= (eind / begin)
+      heeftGeldigeMaand = true
+    }
+  }
+  return heeftGeldigeMaand ? (ketting - 1) * 100 : null
 }
 
 // ─── positions (with GAK fix) ────────────────────────────────────────────────
@@ -382,10 +669,28 @@ export function calcPortfolioValue(positions: Position[]): number {
   return positions.reduce((sum, p) => sum + p.waarde, 0)
 }
 
+// Year of the earliest transaction or manual entry — used as the anchor point
+// for "reëel (na inflatie)" so we don't deflate over years the user wasn't invested yet.
+export function calcEersteJaar(transactions: Transaction[], manualEntries: ManualEntry[] = []): number {
+  const jaren: number[] = [
+    ...transactions.map(t => new Date(t.datum).getFullYear()),
+    ...manualEntries.map(m => new Date(m.datum).getFullYear()),
+  ]
+  return jaren.length > 0 ? Math.min(...jaren) : new Date().getFullYear()
+}
+
+// Deflate a value by settings.inflatie, anchored at `eersteJaar` rather than a fixed year.
+export function calcReeel(waarde: number, inflatiePct: number, jaar: number, eersteJaar: number): number {
+  const jarenBelegd = Math.max(0, jaar - eersteJaar)
+  return waarde / Math.pow(1 + inflatiePct / 100, jarenBelegd)
+}
+
 export function calcTotaalIngelegd(accountEvents: AccountEvent[]): number {
-  return accountEvents
-    .filter(e => e.type === 'storting')
-    .reduce((sum, e) => sum + e.bedrag, 0)
+  return accountEvents.reduce((sum, e) => {
+    if (e.type === 'storting') return sum + e.bedrag
+    if (e.type === 'opname') return sum - e.bedrag
+    return sum
+  }, 0)
 }
 
 export function calcBox3Oud(vermogen: number, hvv: number, forfait: number, tarief: number): number {

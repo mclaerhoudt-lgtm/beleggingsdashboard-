@@ -18,6 +18,7 @@ interface Summary {
   transacties: number
   dividenden: number
   stortingen: number
+  opnames: number
   skipped: number
 }
 
@@ -54,7 +55,7 @@ export function Import({
     const { transactions: updated, added, skipped } = parseTransactionsCsv(text, transactions)
     onTransactions(updated)
     toast.success(`${added} transacties geïmporteerd${skipped ? `, ${skipped} overgeslagen` : ''}`)
-    setSummary(s => ({ ...s ?? { dividenden: 0, stortingen: 0 }, transacties: (s?.transacties ?? 0) + added, skipped: (s?.skipped ?? 0) + skipped }))
+    setSummary(s => ({ ...s ?? { dividenden: 0, stortingen: 0, opnames: 0 }, transacties: (s?.transacties ?? 0) + added, skipped: (s?.skipped ?? 0) + skipped }))
     if (txRef.current) txRef.current.value = ''
   }
 
@@ -62,12 +63,13 @@ export function Import({
     const file = accRef.current?.files?.[0]
     if (!file) return toast.error('Selecteer een Account.csv bestand')
     const text = await readFile(file)
-    const { events: updated, stortingen, dividenden, skipped } = parseAccountCsv(text, accountEvents)
+    const { events: updated, stortingen, opnames, dividenden, skipped } = parseAccountCsv(text, accountEvents)
     onAccountEvents(updated)
-    toast.success(`${stortingen} stortingen, ${dividenden} dividenden geïmporteerd`)
+    toast.success(`${stortingen} stortingen, ${opnames} opnames, ${dividenden} dividenden geïmporteerd`)
     setSummary(s => ({
       ...s ?? { transacties: 0 },
       stortingen: (s?.stortingen ?? 0) + stortingen,
+      opnames: (s?.opnames ?? 0) + opnames,
       dividenden: (s?.dividenden ?? 0) + dividenden,
       skipped: (s?.skipped ?? 0) + skipped,
     }))
@@ -78,7 +80,7 @@ export function Import({
     const txFile = txRef.current?.files?.[0]
     const accFile = accRef.current?.files?.[0]
     if (!txFile && !accFile) return toast.error('Selecteer minimaal één bestand')
-    let sum: Summary = { transacties: 0, dividenden: 0, stortingen: 0, skipped: 0 }
+    const sum: Summary = { transacties: 0, dividenden: 0, stortingen: 0, opnames: 0, skipped: 0 }
 
     if (txFile) {
       const text = await readFile(txFile)
@@ -92,6 +94,7 @@ export function Import({
       const r = parseAccountCsv(text, accountEvents)
       onAccountEvents(r.events)
       sum.stortingen += r.stortingen
+      sum.opnames += r.opnames
       sum.dividenden += r.dividenden
       sum.skipped += r.skipped
     }
@@ -156,10 +159,11 @@ export function Import({
       {summary && (
         <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-2xl p-5">
           <h3 className="font-semibold text-green-700 dark:text-green-300 mb-3">Import samenvatting</h3>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div><p className="text-xs text-green-500">Transacties</p><p className="text-xl font-bold text-green-700 dark:text-green-300">{summary.transacties}</p></div>
             <div><p className="text-xs text-green-500">Dividenden</p><p className="text-xl font-bold text-green-700 dark:text-green-300">{summary.dividenden}</p></div>
             <div><p className="text-xs text-green-500">Stortingen</p><p className="text-xl font-bold text-green-700 dark:text-green-300">{summary.stortingen}</p></div>
+            <div><p className="text-xs text-green-500">Opnames</p><p className="text-xl font-bold text-green-700 dark:text-green-300">{summary.opnames}</p></div>
             <div><p className="text-xs text-green-500">Overgeslagen</p><p className="text-xl font-bold text-green-700 dark:text-green-300">{summary.skipped}</p></div>
           </div>
         </div>

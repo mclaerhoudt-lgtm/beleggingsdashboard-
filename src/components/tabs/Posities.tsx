@@ -118,7 +118,10 @@ export function Posities({ positions, koersen, loading }: Props) {
       {/* Allocation chart */}
       {allocData.length > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-2xl p-5 border border-gray-100 dark:border-gray-700">
-          <h2 className="text-base font-semibold text-gray-700 dark:text-gray-200 mb-4">Portefeuilleverdeling</h2>
+          <h2 className="text-base font-semibold text-gray-700 dark:text-gray-200 mb-1">Portefeuilleverdeling</h2>
+          <p className="text-xs text-gray-400 mb-4">
+            Hoe je huidige portefeuillewaarde verdeeld is over je posities, op basis van de actuele koersen.
+          </p>
           <AllocChart data={allocData} />
         </div>
       )}

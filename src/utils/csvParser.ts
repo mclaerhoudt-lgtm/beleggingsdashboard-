@@ -50,11 +50,6 @@ export function parseTransactionsCsv(
   const rows = result.data
   if (rows.length < 2) return { transactions: existing, added: 0, skipped: 0 }
 
-  // Debug: log header row and first data row so column mapping is visible
-  console.log('[Transactions.csv] header :', rows[0])
-  console.log('[Transactions.csv] row[1]  :', rows[1])
-  console.log('[Transactions.csv] row count:', rows.length, '  col count:', rows[0]?.length)
-
   const newTransactions: Transaction[] = [...existing]
   let added = 0
   let skipped = 0
@@ -118,7 +113,7 @@ export function parseTransactionsCsv(
 export function parseAccountCsv(
   csvText: string,
   existing: AccountEvent[],
-): { events: AccountEvent[]; stortingen: number; dividenden: number; skipped: number } {
+): { events: AccountEvent[]; stortingen: number; opnames: number; dividenden: number; skipped: number } {
   const existingIds = new Set(existing.map(e => e.id))
 
   const result = Papa.parse<string[]>(csvText, {
@@ -129,14 +124,11 @@ export function parseAccountCsv(
   })
 
   const rows = result.data
-  if (rows.length < 2) return { events: existing, stortingen: 0, dividenden: 0, skipped: 0 }
-
-  console.log('[Account.csv] header :', rows[0])
-  console.log('[Account.csv] row[1]  :', rows[1])
-  console.log('[Account.csv] row count:', rows.length, '  col count:', rows[0]?.length)
+  if (rows.length < 2) return { events: existing, stortingen: 0, opnames: 0, dividenden: 0, skipped: 0 }
 
   const newEvents: AccountEvent[] = [...existing]
   let stortingen = 0
+  let opnames = 0
   let dividenden = 0
   let skipped = 0
 
@@ -169,8 +161,11 @@ export function parseAccountCsv(
       continue
     }
 
-    let type: AccountEvent['type'] | null = null
-    if (omschrijvingLower.includes('deposit') || omschrijvingLower.includes('storting')) {
+    let type: AccountEvent['type']
+    if (omschrijvingLower.includes('terugstorting') || omschrijvingLower.includes('withdrawal') || omschrijvingLower.includes('opname')) {
+      // Must be checked before 'storting' — "terugstorting" contains "storting" as a substring
+      type = 'opname'
+    } else if (omschrijvingLower.includes('deposit') || omschrijvingLower.includes('storting')) {
       type = 'storting'
     } else if (omschrijvingLower === 'dividend') {
       type = 'dividend'
@@ -196,8 +191,9 @@ export function parseAccountCsv(
     existingIds.add(id)
     newEvents.push(event)
     if (type === 'storting') stortingen++
+    else if (type === 'opname') opnames++
     else if (type === 'dividend') dividenden++
   }
 
-  return { events: newEvents, stortingen, dividenden, skipped }
+  return { events: newEvents, stortingen, opnames, dividenden, skipped }
 }

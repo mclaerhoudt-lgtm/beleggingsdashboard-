@@ -2,37 +2,37 @@ import { useState, useMemo } from 'react'
 import { MarketChart } from '../charts/MarketChart'
 import type { MarketDataPoint } from '../charts/MarketChart'
 import { formatEuro, formatPct, MAANDEN } from '../../utils/formatters'
-import type { Transaction, KoersCache } from '../../types'
+import type { Transaction, KoersCache, KoersHistorie } from '../../types'
 import { ISIN_SYMBOLS } from '../../types'
-import { HISTORISCHE_KOERSEN } from '../../utils/calculations'
 
 interface Props {
   transactions: Transaction[]
   koersen: KoersCache
+  koersHistorie: KoersHistorie
 }
 
-// Build the sorted list of ISINs: from transactions + fallback from HISTORISCHE_KOERSEN
-function buildIsins(transactions: Transaction[]): Array<{ isin: string; product: string }> {
+// Build the sorted list of ISINs: from transactions + fallback from koersHistorie
+function buildIsins(transactions: Transaction[], koersHistorie: KoersHistorie): Array<{ isin: string; product: string }> {
   const seen = new Map<string, string>()
   for (const t of transactions) {
     if (t.isin && t.product && !seen.has(t.isin)) seen.set(t.isin, t.product)
   }
   // Also include ISINs with historical data that the user may only have dividends for
-  for (const isin of Object.keys(HISTORISCHE_KOERSEN)) {
+  for (const isin of Object.keys(koersHistorie)) {
     if (!seen.has(isin)) seen.set(isin, isin)
   }
   return Array.from(seen.entries()).map(([isin, product]) => ({ isin, product }))
 }
 
-export function Markt({ transactions, koersen }: Props) {
-  const isins = useMemo(() => buildIsins(transactions), [transactions])
+export function Markt({ transactions, koersen, koersHistorie }: Props) {
+  const isins = useMemo(() => buildIsins(transactions, koersHistorie), [transactions, koersHistorie])
 
   const [selectedIsin, setSelectedIsin] = useState<string>(() => isins[0]?.isin ?? '')
   const isin = (selectedIsin || isins[0]?.isin) ?? ''
 
-  // Build chart data from HISTORISCHE_KOERSEN (23 data points per ISIN)
+  // Build chart data from koersHistorie (live-fetched monthly closes)
   const chartData = useMemo((): MarketDataPoint[] => {
-    const priceMap = HISTORISCHE_KOERSEN[isin]
+    const priceMap = koersHistorie[isin]
     if (!priceMap) return []
 
     const entries = Object.entries(priceMap).sort(([a], [b]) => a.localeCompare(b))
@@ -63,7 +63,7 @@ export function Markt({ transactions, koersen }: Props) {
     }
 
     return points
-  }, [isin])
+  }, [isin, koersHistorie])
 
   const selectedProduct = isins.find(p => p.isin === isin)?.product ?? isin
   const symbol    = ISIN_SYMBOLS[isin]
@@ -144,7 +144,9 @@ export function Markt({ transactions, koersen }: Props) {
         <h2 className="text-base font-semibold text-gray-700 dark:text-gray-200 mb-1">
           {selectedProduct.length > 50 ? selectedProduct.slice(0, 48) + '…' : selectedProduct}
         </h2>
-        <p className="text-xs text-gray-400 mb-4">Maand-eindkoers — historische data</p>
+        <p className="text-xs text-gray-400 mb-4">
+          De koers van {selectedProduct} aan het einde van elke maand, over de beschikbare historie (circa 5 jaar via Yahoo Finance).
+        </p>
         <MarketChart data={chartData} name={selectedProduct} />
       </div>
     </div>

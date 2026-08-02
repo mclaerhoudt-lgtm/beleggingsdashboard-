@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useLocalStorage } from './useLocalStorage'
-import { calcPositions, calcPortfolioValue, calcTotaalIngelegd } from '../utils/calculations'
+import { calcPositions, calcPortfolioValue, calcTotaalIngelegd, calcEersteJaar, calcReeel } from '../utils/calculations'
 import type { Transaction, AccountEvent, ManualEntry, Settings, KoersCache } from '../types'
 import { DEFAULT_SETTINGS } from '../types'
 
@@ -22,11 +22,30 @@ export function usePortfolio(koersen: KoersCache) {
     [transactions, accountEvents, koersen],
   )
 
-  const portfolioValue = useMemo(() => calcPortfolioValue(positions), [positions])
-  const totaalIngelegd = useMemo(() => calcTotaalIngelegd(accountEvents), [accountEvents])
+  // When there is no CSV-derived data at all, fall back to the most recent manual entry
+  // so a portfolio tracked purely via handmatige invoer still shows real numbers.
+  const latestManualEntry = useMemo(
+    () => manualEntries.length > 0
+      ? [...manualEntries].sort((a, b) => b.datum.localeCompare(a.datum))[0]
+      : null,
+    [manualEntries],
+  )
+  const hasCsvData = transactions.length > 0
+
+  const portfolioValue = useMemo(() => {
+    const calc = calcPortfolioValue(positions)
+    return !hasCsvData && latestManualEntry ? latestManualEntry.portefeuillewaarde : calc
+  }, [positions, hasCsvData, latestManualEntry])
+
+  const totaalIngelegd = useMemo(() => {
+    const calc = calcTotaalIngelegd(accountEvents)
+    return !hasCsvData && latestManualEntry ? latestManualEntry.totaalIngelegd : calc
+  }, [accountEvents, hasCsvData, latestManualEntry])
+
   const rendement = portfolioValue - totaalIngelegd
   const rendementPct = totaalIngelegd > 0 ? (rendement / totaalIngelegd) * 100 : 0
-  const reeel = portfolioValue / Math.pow(1 + settings.inflatie / 100, new Date().getFullYear() - 2020)
+  const eersteJaar = useMemo(() => calcEersteJaar(transactions, manualEntries), [transactions, manualEntries])
+  const reeel = calcReeel(portfolioValue, settings.inflatie, new Date().getFullYear(), eersteJaar)
 
   function resetAll() {
     setTransactions([])
@@ -49,6 +68,7 @@ export function usePortfolio(koersen: KoersCache) {
     rendement,
     rendementPct,
     reeel,
+    eersteJaar,
     resetAll,
   }
 }

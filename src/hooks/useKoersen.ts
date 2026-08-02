@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { KoersCache, KoersData } from '../types'
 import { useLocalStorage } from './useLocalStorage'
 
@@ -36,9 +36,6 @@ export function useKoersen() {
   const [cache, setCache] = useLocalStorage<KoersCache>(CACHE_KEY, {})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Keep a ref so the interval callback always sees the latest cache value
-  const cacheRef = useRef(cache)
-  cacheRef.current = cache
 
   const fetchKoersen = useCallback(async () => {
     setLoading(true)
@@ -62,7 +59,7 @@ export function useKoersen() {
       })
       setLoading(false)
       return
-    } catch (apiErr) {
+    } catch {
       // /api/quote unreachable — try Yahoo Finance directly from the browser
       // (works without CORS on some networks; silently skipped if blocked)
     }
@@ -88,10 +85,12 @@ export function useKoersen() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [setCache])
 
   useEffect(() => {
-    fetchKoersen()
+    // Defer the initial call to a microtask so the state updates inside
+    // fetchKoersen don't run synchronously within the effect body itself.
+    queueMicrotask(() => { fetchKoersen() })
     const id = setInterval(fetchKoersen, REFRESH_MS)
     return () => clearInterval(id)
   }, [fetchKoersen])

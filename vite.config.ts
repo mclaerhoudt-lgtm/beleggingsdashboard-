@@ -34,6 +34,38 @@ async function fetchYahoo(symbol: string) {
   }
 }
 
+async function fetchYahooHistory(symbol: string) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1mo&range=5y`
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    signal: AbortSignal.timeout(8_000),
+  })
+  if (!res.ok) throw new Error(`Yahoo HTTP ${res.status}`)
+  const json = await res.json() as {
+    chart: {
+      result: Array<{
+        timestamp?: number[]
+        indicators: {
+          quote: Array<{ close: Array<number | null> }>
+          adjclose?: Array<{ adjclose: Array<number | null> }>
+        }
+      }>
+    }
+  }
+  const result = json.chart?.result?.[0]
+  const timestamps = result?.timestamp ?? []
+  const closes = result?.indicators?.quote?.[0]?.close ?? []
+  const adjcloses = result?.indicators?.adjclose?.[0]?.adjclose ?? []
+
+  const prices: Array<{ month: string; close: number }> = []
+  for (let i = 0; i < timestamps.length; i++) {
+    const close = closes[i] ?? adjcloses[i]
+    if (close == null) continue
+    prices.push({ month: new Date(timestamps[i] * 1000).toISOString().slice(0, 7), close })
+  }
+  return { symbol, prices }
+}
+
 export default defineConfig({
   plugins: [
     react(),
@@ -72,19 +104,32 @@ export default defineConfig({
           async (req: IncomingMessage, res: ServerResponse, next: (err?: unknown) => void) => {
             try {
               const qs = req.url?.split('?')[1] ?? ''
-              const symbols = new URLSearchParams(qs).get('symbols')?.split(',').filter(Boolean) ?? []
+              const params = new URLSearchParams(qs)
+              const symbols = params.get('symbols')?.split(',').filter(Boolean) ?? []
+              const isHistory = params.get('history') === '1'
 
-              const data = await Promise.all(
-                symbols.map(async (symbol) => {
-                  try {
-                    return await fetchYahoo(symbol)
-                  } catch (e) {
-                    console.warn(`[dev-api-mock] Yahoo failed for ${symbol}: ${(e as Error).message} — using fallback`)
-                    const fb = DEV_FALLBACK[symbol] ?? { price: 0, currency: 'EUR' }
-                    return { symbol, price: fb.price, change: 0, changePercent: 0, currency: fb.currency, updatedAt: new Date().toISOString() }
-                  }
-                }),
-              )
+              const data = isHistory
+                ? await Promise.all(
+                    symbols.map(async (symbol) => {
+                      try {
+                        return await fetchYahooHistory(symbol)
+                      } catch (e) {
+                        console.warn(`[dev-api-mock] Yahoo history failed for ${symbol}: ${(e as Error).message}`)
+                        return { symbol, prices: [] }
+                      }
+                    }),
+                  )
+                : await Promise.all(
+                    symbols.map(async (symbol) => {
+                      try {
+                        return await fetchYahoo(symbol)
+                      } catch (e) {
+                        console.warn(`[dev-api-mock] Yahoo failed for ${symbol}: ${(e as Error).message} — using fallback`)
+                        const fb = DEV_FALLBACK[symbol] ?? { price: 0, currency: 'EUR' }
+                        return { symbol, price: fb.price, change: 0, changePercent: 0, currency: fb.currency, updatedAt: new Date().toISOString() }
+                      }
+                    }),
+                  )
 
               res.setHeader('Content-Type', 'application/json')
               res.end(JSON.stringify(data))

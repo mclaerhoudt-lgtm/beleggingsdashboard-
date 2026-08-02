@@ -13,7 +13,7 @@ export interface Transaction {
 export interface AccountEvent {
   id: string
   datum: string
-  type: 'storting' | 'dividend' | 'dividendbelasting'
+  type: 'storting' | 'opname' | 'dividend' | 'dividendbelasting'
   product: string
   isin: string
   bedrag: number
@@ -53,6 +53,12 @@ export interface KoersData {
 
 export interface KoersCache {
   [symbol: string]: KoersData
+}
+
+// Monthly close prices per ISIN: ISIN -> 'YYYY-MM' -> close price.
+// Sourced from Yahoo Finance monthly candles (see useHistorischeKoersen), cached in localStorage.
+export interface KoersHistorie {
+  [isin: string]: Record<string, number>
 }
 
 export interface Settings {

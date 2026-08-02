@@ -4,8 +4,8 @@ import { SliderInput } from '../ui/SliderInput'
 import { GrowthChart } from '../charts/GrowthChart'
 import { ReturnChart } from '../charts/ReturnChart'
 import { formatEuro, formatPct, MAANDEN } from '../../utils/formatters'
-import { calcPortfolioHistorie, KORTE_NAAM } from '../../utils/calculations'
-import type { Settings, Transaction, AccountEvent, ManualEntry, Position } from '../../types'
+import { calcPortfolioHistorie, calcReeel, KORTE_NAAM } from '../../utils/calculations'
+import type { Settings, Transaction, AccountEvent, ManualEntry, Position, KoersHistorie, KoersCache } from '../../types'
 
 // Per-ISIN dot colour (brand palette)
 const ISIN_KLEUR: Record<string, string> = {
@@ -19,12 +19,15 @@ interface Props {
   totaalIngelegd: number
   rendement: number
   rendementPct: number
+  eersteJaar: number
   settings: Settings
   onSettingsChange: (s: Settings) => void
   transactions: Transaction[]
   accountEvents: AccountEvent[]
   manualEntries: ManualEntry[]
   positions: Position[]
+  koersHistorie: KoersHistorie
+  koersen: KoersCache
   loading: boolean
 }
 
@@ -50,13 +53,17 @@ function BreakdownRij({ isin, naam, bedrag, pct, sub }: {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function Overzicht({
-  portfolioValue, totaalIngelegd, rendement, rendementPct,
-  settings, onSettingsChange, transactions, positions, loading,
+  portfolioValue, totaalIngelegd, rendement, rendementPct, eersteJaar,
+  settings, onSettingsChange, transactions, manualEntries, positions, koersHistorie, koersen, loading,
 }: Props) {
-  const reeel  = portfolioValue / Math.pow(1 + settings.inflatie / 100, new Date().getFullYear() - 2020)
+  const reeel  = calcReeel(portfolioValue, settings.inflatie, new Date().getFullYear(), eersteJaar)
   const isPos  = rendement >= 0
 
-  const historie = useMemo(() => calcPortfolioHistorie(transactions), [transactions])
+  const historie = useMemo(
+    () => calcPortfolioHistorie(transactions, koersHistorie, koersen),
+    [transactions, koersHistorie, koersen],
+  )
+  const laatsteMaand = historie[historie.length - 1]
 
   const growthData = useMemo(() => historie.map(d => {
     const [y, m] = d.key.split('-')
@@ -64,9 +71,9 @@ export function Overzicht({
       label:   `${MAANDEN[parseInt(m) - 1]} '${y.slice(2)}`,
       waarde:  d.waarde,
       ingelegd: d.ingelegd,
-      reeel:   d.waarde / Math.pow(1 + settings.inflatie / 100, parseInt(y) - 2020),
+      reeel:   calcReeel(d.waarde, settings.inflatie, parseInt(y), eersteJaar),
     }
-  }), [historie, settings.inflatie])
+  }), [historie, settings.inflatie, eersteJaar])
 
   const returnData = useMemo(() => historie
     .filter(d => d.rendementEuro !== 0)
@@ -115,7 +122,7 @@ export function Overzicht({
     return perIsin
   }, [positions, totaalIngelegd, transactions])
 
-  const isEmpty = transactions.length === 0
+  const isEmpty = transactions.length === 0 && manualEntries.length === 0
 
   return (
     <div className="space-y-6">
@@ -182,14 +189,19 @@ export function Overzicht({
           {growthData.length > 0 && (
             <div className="bg-white dark:bg-gray-800 rounded-2xl p-5 border border-gray-100 dark:border-gray-700">
               <h2 className="text-base font-semibold text-gray-700 dark:text-gray-200 mb-1">Portefeuillegroei</h2>
-              <p className="text-xs text-gray-400 mb-4">Op basis van historische maand-eindkoersen</p>
+              <p className="text-xs text-gray-400 mb-4">
+                Je portefeuillewaarde per maand (holdings × maand-eindkoers), naast je totale inleg en de reële waarde na inflatie.
+                {laatsteMaand?.isSchatting && ' Het laatste punt is een tussentijdse schatting op basis van de live koers.'}
+              </p>
               <GrowthChart data={growthData} />
             </div>
           )}
           {returnData.length > 0 && (
             <div className="bg-white dark:bg-gray-800 rounded-2xl p-5 border border-gray-100 dark:border-gray-700">
               <h2 className="text-base font-semibold text-gray-700 dark:text-gray-200 mb-1">Rendement per maand</h2>
-              <p className="text-xs text-gray-400 mb-4">Maand-over-maand rendement op basis van historische koersen</p>
+              <p className="text-xs text-gray-400 mb-4">
+                Je koersrendement per maand in %, gecorrigeerd voor stortingen en verkopen — dus puur hoe je beleggingen bewogen, niet hoeveel je bijstortte.
+              </p>
               <ReturnChart data={returnData} />
             </div>
           )}

@@ -1,10 +1,10 @@
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { SliderInput } from '../ui/SliderInput'
 import { MetricCard } from '../ui/MetricCard'
 import { FutureChart } from '../charts/FutureChart'
 import { formatEuro, formatPct } from '../../utils/formatters'
 import { calcToekomst } from '../../utils/calculations'
-import { CHART_COLORS } from '../charts/FutureChart'
+import { CHART_COLORS } from '../charts/chartColors'
 import { useLocalStorage } from '../../hooks/useLocalStorage'
 import type { ToekomstParams, ToekomstPunt, VerhoogMoment } from '../../types'
 import toast from 'react-hot-toast'
@@ -44,7 +44,6 @@ const FASE_COLORS = [
 ]
 
 interface Props {
-  initialRendement?: number | null
   portfolioValue?: number
 }
 
@@ -165,7 +164,7 @@ function DetailPanel({ punt, data, params, onClose, onNav }: {
         <div className="space-y-2">
           <Row label="Ingelegd t/m nu"     value={formatEuro(punt.ingelegd + params.startkapitaal)} />
           <Row label="Rendement t/m nu"
-            value={`${formatEuro(rendement)} (${formatPct(punt.nominaal > 0 ? (rendement / (params.startkapitaal + punt.ingelegd)) * 100 : 0, 1)})`}
+            value={`${formatEuro(rendement)} (${formatPct((params.startkapitaal + punt.ingelegd) > 0 ? (rendement / (params.startkapitaal + punt.ingelegd)) * 100 : 0, 1)})`}
             positive={rendement >= 0}
           />
           <Row label="Transactiekosten t/m nu" value={formatEuro(punt.totaleKosten)} />
@@ -230,7 +229,7 @@ function Row({ label, value, highlight, positive, warn }: {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function Toekomst({ initialRendement, portfolioValue }: Props) {
+export function Toekomst({ portfolioValue }: Props) {
   // Persisted in localStorage — survives tab switches
   const [params, setParams] = useLocalStorage<ToekomstParams>(
     STORAGE_KEY,
@@ -238,15 +237,9 @@ export function Toekomst({ initialRendement, portfolioValue }: Props) {
   )
   const [selectedYear, setSelectedYear] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (initialRendement == null) return
-    setParams(p => ({ ...p, rendementPct: initialRendement }))
-    toast.success(`Rendement ingesteld op ${initialRendement.toFixed(1)}% (historisch VUSA.AS)`)
-  }, [initialRendement])
-
   const set = useCallback(<K extends keyof ToekomstParams>(k: K, v: ToekomstParams[K]) => {
     setParams(p => ({ ...p, [k]: v }))
-  }, [])
+  }, [setParams])
 
   function resetToDefault() {
     setParams({ ...DEFAULT_TOEKOMST_PARAMS, startkapitaal: getInitialStartkapitaal(portfolioValue) })
@@ -402,12 +395,13 @@ export function Toekomst({ initialRendement, portfolioValue }: Props) {
 
           {/* CHART */}
           <div className="bg-white dark:bg-gray-800 rounded-2xl p-4 border border-gray-100 dark:border-gray-700">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-1">
               <h3 className="font-semibold text-gray-700 dark:text-gray-200">Prognose</h3>
-              {!selectedYear && (
-                <p className="text-xs text-gray-400 dark:text-gray-500">Klik op een jaar voor details</p>
-              )}
             </div>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mb-3">
+              Projectie van je vermogen op basis van je inleg, verwacht rendement, inflatie en (optioneel) box 3-belasting.
+              {!selectedYear && ' Klik op een jaar voor details.'}
+            </p>
             <FutureChart
               data={data}
               verhoogmomenten={params.verhoogmomenten}

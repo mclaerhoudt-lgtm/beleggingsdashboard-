@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Toaster } from 'react-hot-toast'
 import { useKoersen } from './hooks/useKoersen'
+import { useHistorischeKoersen } from './hooks/useHistorischeKoersen'
 import { usePortfolio } from './hooks/usePortfolio'
 import { Overzicht } from './components/tabs/Overzicht'
 import { Logboek } from './components/tabs/Logboek'
@@ -29,9 +30,20 @@ function getInitialTab(): TabId {
   return TABS.find(t => t.id === tab) ? tab! : 'overzicht'
 }
 
+function DarkToggle({ dark, onToggle }: { dark: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      className="shrink-0 p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+      aria-label="Schakel donkere modus"
+    >
+      {dark ? '☀️' : '🌙'}
+    </button>
+  )
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>(getInitialTab)
-  const [toekomstRendement, setToekomstRendement] = useState<number | null>(null)
   const [dark, setDark] = useState(() => {
     const stored = localStorage.getItem('bdash_dark')
     if (stored !== null) return stored === 'true'
@@ -44,17 +56,8 @@ export default function App() {
   }, [dark])
 
   const { koersen, loading: koersenLoading } = useKoersen()
+  const { koersHistorie } = useHistorischeKoersen()
   const portfolio = usePortfolio(koersen)
-
-  const DarkToggle = () => (
-    <button
-      onClick={() => setDark(d => !d)}
-      className="shrink-0 p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-      aria-label="Schakel donkere modus"
-    >
-      {dark ? '☀️' : '🌙'}
-    </button>
-  )
 
   const tabContent: Record<TabId, React.ReactNode> = {
     overzicht: (
@@ -63,12 +66,15 @@ export default function App() {
         totaalIngelegd={portfolio.totaalIngelegd}
         rendement={portfolio.rendement}
         rendementPct={portfolio.rendementPct}
+        eersteJaar={portfolio.eersteJaar}
         settings={portfolio.settings}
         onSettingsChange={portfolio.setSettings}
         transactions={portfolio.transactions}
         accountEvents={portfolio.accountEvents}
         manualEntries={portfolio.manualEntries}
         positions={portfolio.positions}
+        koersHistorie={koersHistorie}
+        koersen={koersen}
         loading={koersenLoading}
       />
     ),
@@ -77,7 +83,8 @@ export default function App() {
         transactions={portfolio.transactions}
         accountEvents={portfolio.accountEvents}
         manualEntries={portfolio.manualEntries}
-        onNavigateToToekomst={(r) => { setToekomstRendement(r); setActiveTab('toekomst') }}
+        koersHistorie={koersHistorie}
+        koersen={koersen}
       />
     ),
     posities: (
@@ -87,11 +94,12 @@ export default function App() {
         loading={koersenLoading}
       />
     ),
-    toekomst: <Toekomst initialRendement={toekomstRendement} portfolioValue={portfolio.portfolioValue} />,
+    toekomst: <Toekomst portfolioValue={portfolio.portfolioValue} />,
     markt: (
       <Markt
         transactions={portfolio.transactions}
         koersen={koersen}
+        koersHistorie={koersHistorie}
       />
     ),
     import: (
@@ -138,7 +146,7 @@ export default function App() {
             </div>
           </nav>
 
-          <DarkToggle />
+          <DarkToggle dark={dark} onToggle={() => setDark(d => !d)} />
         </div>
       </header>
 
@@ -149,7 +157,7 @@ export default function App() {
             {TABS.find(t => t.id === activeTab)?.icon}{' '}
             {TABS.find(t => t.id === activeTab)?.label}
           </span>
-          <DarkToggle />
+          <DarkToggle dark={dark} onToggle={() => setDark(d => !d)} />
         </div>
       </header>
 
