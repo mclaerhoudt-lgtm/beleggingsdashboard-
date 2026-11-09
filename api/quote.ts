@@ -30,31 +30,31 @@ interface YahooChartResponse {
   }
 }
 
-interface MaandKoers {
-  month: string   // YYYY-MM
+interface DagKoers {
+  dag: string   // YYYY-MM-DD
   close: number
 }
 
 interface HistoryResult {
   symbol: string
-  prices: MaandKoers[]
+  prices: DagKoers[]
 }
 
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 
-// Bepaalt de kalendermaand (YYYY-MM) van een Yahoo-timestamp (seconden) in de
+// Bepaalt de kalenderdag (YYYY-MM-DD) van een Yahoo-timestamp (seconden) in de
 // lokale tijdzone van de beurs. Een vaste gmtoffset klopt alleen op het moment
 // van ophalen — over een zomer/wintertijd-grens (bv. de laatste zondag van
-// oktober) is die een uur mis, waardoor de candle rond de maandgrens in de
-// verkeerde maand valt (oktober "verdwijnt" tussen september en november).
-// Intl.DateTimeFormat past per datum de juiste DST-regel toe, dus dit blijft
-// correct over alle jaren en beide DST-overgangen heen.
-function maandVan(ts: number, tz: string): string {
-  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit' })
+// oktober) is die een uur mis, waardoor een candle op de verkeerde dag (en dus
+// mogelijk verkeerde maand) terechtkomt. Intl.DateTimeFormat past per datum de
+// juiste DST-regel toe, dus dit blijft correct over alle jaren heen.
+function dagVan(ts: number, tz: string): string {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
   const parts = fmt.formatToParts(new Date(ts * 1000))
   const y = parts.find(p => p.type === 'year')!.value
   const m = parts.find(p => p.type === 'month')!.value
-  return `${y}-${m}`
+  const d = parts.find(p => p.type === 'day')!.value
+  return `${y}-${m}-${d}`
 }
 
 // Per-request in-memory cache (Edge Functions are short-lived, but helps with burst requests)
@@ -86,10 +86,13 @@ async function fetchSymbol(symbol: string): Promise<YahooResult> {
   }
 }
 
-// Monthly close prices for the last 5 years — used to build historical
-// portfolio value / return charts instead of hand-entered placeholder data.
+// Daily close prices for the last 5 years (~1.260 punten/symbool) — voedt de
+// fijnmazige portefeuillegroei-grafiek. Maand-eindkoersen voor het Logboek/
+// rendement-per-maand worden client-side afgeleid uit deze dagreeks
+// (zie afleidenMaandKoersen in utils/calculations.ts) — methode ongewijzigd,
+// alleen zuiverder dan Yahoo's eigen maand-candle.
 async function fetchHistory(symbol: string): Promise<HistoryResult> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1mo&range=5y`
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5y`
   const res = await fetch(url, {
     headers: { 'User-Agent': USER_AGENT },
     signal: AbortSignal.timeout(10_000),
@@ -99,29 +102,29 @@ async function fetchHistory(symbol: string): Promise<HistoryResult> {
   const json = await res.json() as YahooChartResponse
   const result = json.chart?.result?.[0]
   const timestamps = result?.timestamp ?? []
-  // Actual close (not adjclose) — we need the real end-of-month share price
+  // Actual close (not adjclose) — we need the real end-of-day share price
   // for valuation, not a dividend/split-adjusted backtest price.
   const closes = result?.indicators?.quote?.[0]?.close ?? []
   const adjcloses = result?.indicators?.adjclose?.[0]?.adjclose ?? []
 
   const tz = result?.meta?.exchangeTimezoneName ?? 'Europe/Amsterdam'
-  const huidigeMaand = maandVan(Math.floor(Date.now() / 1000), tz)
+  const vandaag = dagVan(Math.floor(Date.now() / 1000), tz)
 
   // Map i.p.v. array: als twee candles (zou niet moeten, maar defensief) op
-  // dezelfde maand uitkomen, wint de laatste (meest recente) close.
-  const perMaand = new Map<string, number>()
+  // dezelfde dag uitkomen, wint de laatste (meest recente) close.
+  const perDag = new Map<string, number>()
   for (let i = 0; i < timestamps.length; i++) {
     const close = closes[i] ?? adjcloses[i]
     if (close == null) continue
-    const month = maandVan(timestamps[i], tz)
-    // De huidige, nog lopende maand heeft geen echte close — Yahoo levert hier
-    // de tussentijdse koers. Die mag nooit als afgesloten maand-eindkoers
-    // opgeslagen worden (de live koers dekt de lopende maand al af).
-    if (month === huidigeMaand) continue
-    perMaand.set(month, close)
+    const dag = dagVan(timestamps[i], tz)
+    // Vandaag kan, als de beurs nog open is, een tussentijdse (niet-definitieve)
+    // koers zijn — die dekt de live koers al af en mag nooit als afgesloten
+    // dag-slotkoers opgeslagen worden.
+    if (dag === vandaag) continue
+    perDag.set(dag, close)
   }
 
-  const prices: MaandKoers[] = Array.from(perMaand, ([month, close]) => ({ month, close }))
+  const prices: DagKoers[] = Array.from(perDag, ([dag, close]) => ({ dag, close }))
   return { symbol, prices }
 }
 

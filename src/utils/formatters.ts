@@ -34,6 +34,14 @@ export function formatDatumKort(date: Date): string {
   return `${date.getDate()} ${MAANDEN[date.getMonth()].toLowerCase()} ${date.getFullYear()}`
 }
 
+// "14 mrt '23" — compacte daglabel voor de fijnmazige (dag-granulariteit)
+// groei-grafiek. Werkt rechtstreeks op een 'YYYY-MM-DD'-string i.p.v. een
+// Date, om tijdzone-verschuivingen rond middernacht te vermijden.
+export function formatDagKort(dagKey: string): string {
+  const [y, m, d] = dagKey.split('-').map(Number)
+  return `${d} ${MAANDEN[m - 1]} '${String(y).slice(2)}`
+}
+
 export function monthKey(isoStr: string): string {
   const d = new Date(isoStr)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`

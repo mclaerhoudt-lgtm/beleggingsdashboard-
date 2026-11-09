@@ -37,17 +37,21 @@ async function fetchYahoo(symbol: string) {
 // Zelfde correctie als api/quote.ts: labelen op basis van de lokale tijdzone
 // van de beurs per timestamp (DST-proof) i.p.v. één vaste gmtoffset, die over
 // een zomer/wintertijd-grens (bv. eind oktober) een uur mis is en zo de candle
-// in de verkeerde maand laat vallen.
-function maandVan(ts: number, tz: string): string {
-  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit' })
+// op de verkeerde dag laat vallen.
+function dagVan(ts: number, tz: string): string {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
   const parts = fmt.formatToParts(new Date(ts * 1000))
   const y = parts.find(p => p.type === 'year')!.value
   const m = parts.find(p => p.type === 'month')!.value
-  return `${y}-${m}`
+  const d = parts.find(p => p.type === 'day')!.value
+  return `${y}-${m}-${d}`
 }
 
+// Dagkoersen (i.p.v. maandkoersen) — zelfde bron als api/quote.ts, zodat de
+// dev-mock hetzelfde gedrag heeft als productie. Maand-eindkoersen voor het
+// Logboek worden client-side afgeleid (afleidenMaandKoersen).
 async function fetchYahooHistory(symbol: string) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1mo&range=5y`
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=5y`
   const res = await fetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
     signal: AbortSignal.timeout(8_000),
@@ -71,18 +75,18 @@ async function fetchYahooHistory(symbol: string) {
   const adjcloses = result?.indicators?.adjclose?.[0]?.adjclose ?? []
 
   const tz = result?.meta?.exchangeTimezoneName ?? 'Europe/Amsterdam'
-  const huidigeMaand = maandVan(Math.floor(Date.now() / 1000), tz)
+  const vandaag = dagVan(Math.floor(Date.now() / 1000), tz)
 
-  const perMaand = new Map<string, number>()
+  const perDag = new Map<string, number>()
   for (let i = 0; i < timestamps.length; i++) {
     const close = closes[i] ?? adjcloses[i]
     if (close == null) continue
-    const month = maandVan(timestamps[i], tz)
-    if (month === huidigeMaand) continue
-    perMaand.set(month, close)
+    const dag = dagVan(timestamps[i], tz)
+    if (dag === vandaag) continue
+    perDag.set(dag, close)
   }
 
-  const prices: Array<{ month: string; close: number }> = Array.from(perMaand, ([month, close]) => ({ month, close }))
+  const prices: Array<{ dag: string; close: number }> = Array.from(perDag, ([dag, close]) => ({ dag, close }))
   return { symbol, prices }
 }
 

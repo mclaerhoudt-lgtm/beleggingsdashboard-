@@ -4,8 +4,10 @@ import { MetricCard } from '../ui/MetricCard'
 import { SliderInput } from '../ui/SliderInput'
 import { GrowthChart } from '../charts/GrowthChart'
 import { ReturnChart } from '../charts/ReturnChart'
-import { formatEuro, formatPct, formatDatumKort, MAANDEN } from '../../utils/formatters'
-import { calcPortfolioHistorie, calcReeel, KORTE_NAAM } from '../../utils/calculations'
+import { formatEuro, formatPct, formatDatumKort, formatDagKort, MAANDEN } from '../../utils/formatters'
+import {
+  calcPortfolioHistorie, calcPortfolioHistorieDagelijks, downsampleBehoudExtremen, calcReeel, KORTE_NAAM,
+} from '../../utils/calculations'
 import { useLocalStorage } from '../../hooks/useLocalStorage'
 import type { Settings, Transaction, AccountEvent, ManualEntry, Position, KoersHistorie, KoersCache } from '../../types'
 import { COLORS } from '../../theme'
@@ -19,6 +21,39 @@ const ISIN_KLEUR: Record<string, string> = {
   'NL0010273215': COLORS.secondary,
 }
 const FALLBACK_KLEUR = COLORS.axisMuted
+
+// ─── Periodekiezer voor de portefeuillegroei-grafiek ──────────────────────────
+
+type GroeiPeriode = 'maand' | 'ytd' | 'jaar' | '5jaar' | 'alles'
+const PERIODE_KEY = 'bdash_overzicht_periode'
+// Boven dit aantal punten dunnen we uit (met behoud van de extremen) — anders
+// wordt de "5 jaar"/"Alles"-weergave (~1.260 dagpunten) traag op mobiel.
+const MAX_GRAFIEK_PUNTEN = 350
+
+const PERIODES: Array<{ id: GroeiPeriode; label: string }> = [
+  { id: 'maand', label: 'Maand' },
+  { id: 'ytd',   label: 'YTD' },
+  { id: 'jaar',  label: 'Jaar' },
+  { id: '5jaar', label: '5 jaar' },
+  { id: 'alles', label: 'Alles' },
+]
+
+function dagKeyVanDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// Vroegste dag die nog in de gekozen periode valt. 'alles' heeft geen
+// ondergrens — toont de volledige beschikbare reeks vanaf de eerste transactie.
+function periodeStartDag(periode: GroeiPeriode): string | null {
+  const nu = new Date()
+  switch (periode) {
+    case 'maand': { const d = new Date(nu); d.setDate(d.getDate() - 30); return dagKeyVanDate(d) }
+    case 'ytd':   return `${nu.getFullYear()}-01-01`
+    case 'jaar':  { const d = new Date(nu); d.setDate(d.getDate() - 365); return dagKeyVanDate(d) }
+    case '5jaar': { const d = new Date(nu); d.setDate(d.getDate() - 5 * 365); return dagKeyVanDate(d) }
+    case 'alles': return null
+  }
+}
 
 interface Props {
   portfolioValue: number
@@ -34,6 +69,7 @@ interface Props {
   manualEntries: ManualEntry[]
   positions: Position[]
   koersHistorie: KoersHistorie
+  koersHistorieDagelijks: KoersHistorie
   koersen: KoersCache
   loading: boolean
 }
@@ -61,7 +97,8 @@ function BreakdownRij({ isin, naam, bedrag, pct, sub, verborgen }: {
 
 export function Overzicht({
   portfolioValue, totaalIngelegd, rendement, rendementPct, eersteJaar, laatsteDatum,
-  settings, onSettingsChange, transactions, manualEntries, positions, koersHistorie, koersen, loading,
+  settings, onSettingsChange, transactions, manualEntries, positions,
+  koersHistorie, koersHistorieDagelijks, koersen, loading,
 }: Props) {
   const reeel  = calcReeel(portfolioValue, settings.inflatie, new Date().getFullYear(), eersteJaar)
   const isPos  = rendement >= 0
@@ -71,21 +108,40 @@ export function Overzicht({
   const [verborgen, setVerborgen] = useLocalStorage<boolean>(VERBERG_KEY, false)
   const toon = (bedrag: number) => verborgen ? MASKER : formatEuro(bedrag)
 
+  // Maand-gebaseerd (ongewijzigde methode) — voedt alleen "Rendement per maand"
+  // hieronder. De portefeuillegroei-grafiek gebruikt de fijnmazige dagreeks.
   const historie = useMemo(
     () => calcPortfolioHistorie(transactions, koersHistorie, koersen),
     [transactions, koersHistorie, koersen],
   )
-  const laatsteMaand = historie[historie.length - 1]
 
-  const growthData = useMemo(() => historie.map(d => {
-    const [y, m] = d.key.split('-')
-    return {
-      label:   `${MAANDEN[parseInt(m) - 1]} '${y.slice(2)}`,
-      waarde:  d.waarde,
-      ingelegd: d.ingelegd,
-      reeel:   calcReeel(d.waarde, settings.inflatie, parseInt(y), eersteJaar),
-    }
-  }), [historie, settings.inflatie, eersteJaar])
+  // Periodekiezer voor de groei-grafiek (Maand/YTD/Jaar/5 jaar/Alles) — keuze
+  // blijft bewaard na herladen/tab-wissel.
+  const [periode, setPeriode] = useLocalStorage<GroeiPeriode>(PERIODE_KEY, '5jaar')
+
+  const dagHistorie = useMemo(
+    () => calcPortfolioHistorieDagelijks(transactions, koersHistorieDagelijks, koersen),
+    [transactions, koersHistorieDagelijks, koersen],
+  )
+
+  const gefilterdeDagHistorie = useMemo(() => {
+    const startDag = periodeStartDag(periode)
+    return startDag ? dagHistorie.filter(d => d.datum >= startDag) : dagHistorie
+  }, [dagHistorie, periode])
+
+  // Lange periodes (5 jaar/Alles) dunnen we uit met behoud van de extremen,
+  // zodat de lijn vloeiend blijft op mobiel zonder de piek weg te middelen.
+  const gedownsampledeDagHistorie = useMemo(
+    () => downsampleBehoudExtremen(gefilterdeDagHistorie, MAX_GRAFIEK_PUNTEN, p => p.waarde),
+    [gefilterdeDagHistorie],
+  )
+
+  const growthData = useMemo(() => gedownsampledeDagHistorie.map(d => ({
+    label:    formatDagKort(d.datum),
+    waarde:   d.waarde,
+    ingelegd: d.ingelegd,
+    reeel:    calcReeel(d.waarde, settings.inflatie, parseInt(d.datum.slice(0, 4), 10), eersteJaar),
+  })), [gedownsampledeDagHistorie, settings.inflatie, eersteJaar])
 
   const returnData = useMemo(() => historie
     .filter((d): d is typeof d & { rendementPct: number } => d.rendementEuro !== 0 && d.rendementPct != null)
@@ -216,10 +272,27 @@ export function Overzicht({
         <>
           {growthData.length > 0 && (
             <div className="bg-white dark:bg-gray-800 rounded-2xl p-5 border border-gray-100 dark:border-gray-700">
-              <h2 className="text-base font-semibold text-gray-700 dark:text-gray-200 mb-1">Portefeuillegroei</h2>
+              <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+                <h2 className="text-base font-semibold text-gray-700 dark:text-gray-200">Portefeuillegroei</h2>
+                <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide">
+                  {PERIODES.map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => setPeriode(p.id)}
+                      className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors min-h-[32px] ${
+                        periode === p.id
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-blue-300'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <p className="text-xs text-gray-400 mb-4">
-                Je portefeuillewaarde per maand (holdings × maand-eindkoers), naast je totale inleg en de reële waarde na inflatie.
-                {laatsteMaand?.isSchatting && ' Het laatste punt is een tussentijdse schatting op basis van de live koers.'}
+                Je portefeuillewaarde per handelsdag (holdings × dag-slotkoers), naast je totale inleg en de reële waarde na
+                inflatie. Het laatste punt (vandaag) is gebaseerd op de live koers.
               </p>
               <GrowthChart data={growthData} />
             </div>

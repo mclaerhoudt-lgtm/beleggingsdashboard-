@@ -64,6 +64,26 @@ function resolveKoers(
   return { koers: 0, isSchatting: true }
 }
 
+// Leidt per ISIN een maand-eindkoersmap af uit dagkoersen: de koers van de
+// laatste bekende handelsdag in die kalendermaand (niet noodzakelijk de
+// laatste kalenderdag — weekenden/feestdagen hebben geen candle). Dit voedt
+// dezelfde maand-gebaseerde functies hieronder (berekenMaandData,
+// calcJaarKoersRendement, …) met precies dezelfde vorm als voorheen Yahoo's
+// eigen maand-candle — Logboek/TWR/jaaroverzicht blijven dus qua methode
+// ongewijzigd, alleen de bron is nu zuiverder (echte laatste-handelsdag-close
+// i.p.v. Yahoo's eigen maand-aggregaat).
+export function afleidenMaandKoersen(dagKoersen: Record<string, number> | undefined): Record<string, number> {
+  if (!dagKoersen) return {}
+  const laatsteDagPerMaand: Record<string, string> = {}
+  for (const dag of Object.keys(dagKoersen)) {
+    const maand = dag.slice(0, 7)
+    if (!laatsteDagPerMaand[maand] || dag > laatsteDagPerMaand[maand]) laatsteDagPerMaand[maand] = dag
+  }
+  return Object.fromEntries(
+    Object.entries(laatsteDagPerMaand).map(([maand, dag]) => [maand, dagKoersen[dag]]),
+  )
+}
+
 export interface JaarKoersRendement {
   jaar: number
   koersBegin: number
@@ -265,6 +285,121 @@ export function calcPortfolioHistorie(
   }
 
   return months
+}
+
+// ─── dagelijkse portefeuillewaarde (fijnmazige groei-grafiek in Overzicht) ───
+// Dit is een los spoor naast calcPortfolioHistorie hierboven: die blijft
+// ongewijzigd de bron voor het Logboek/rendement-per-maand, dit voedt alleen
+// de Overzicht-grafiek met een punt per handelsdag i.p.v. per maand, zodat de
+// lijn vloeiend is en de werkelijke piek niet wegvalt in een maand-gemiddelde.
+
+export interface PortfolioDagPunt {
+  datum: string      // YYYY-MM-DD
+  waarde: number
+  ingelegd: number   // cumulatieve netto inleg t/m deze dag
+}
+
+function vandaagLokaalKey(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// Dagelijkse portefeuillewaarde van de eerste transactie t/m vandaag, op basis
+// van dag-slotkoersen. Houdt per ISIN een lopende positie en de laatst bekende
+// koers bij (carry-forward over beursvrije/ontbrekende dagen) i.p.v. per dag
+// de volledige transactielijst opnieuw te doorlopen — nodig omdat dit over
+// ~1.000-1.300 dagen loopt i.p.v. ~60 maanden.
+export function calcPortfolioHistorieDagelijks(
+  transactions: Transaction[],
+  koersHistorieDagelijks: Record<string, Record<string, number>>,
+  koersen: KoersCache,
+): PortfolioDagPunt[] {
+  if (transactions.length === 0) return []
+
+  const sorted = [...transactions].sort((a, b) => a.datum.localeCompare(b.datum))
+  const eersteDag = sorted[0].datum.slice(0, 10)
+  const vandaag = vandaagLokaalKey()
+
+  // Handelsdagen = de dagen waarvoor we daadwerkelijk een koers hebben (union
+  // over alle posities), plus altijd vandaag (die vult de live koers in, ook
+  // als de markt nog open is en er dus nog geen slotkoers-candle bestaat).
+  const handelsdagenSet = new Set<string>()
+  for (const priceMap of Object.values(koersHistorieDagelijks)) {
+    for (const dag of Object.keys(priceMap)) {
+      if (dag >= eersteDag && dag <= vandaag) handelsdagenSet.add(dag)
+    }
+  }
+  handelsdagenSet.add(vandaag)
+  const handelsdagen = Array.from(handelsdagenSet).sort()
+
+  const aantalPerIsin: Record<string, number> = {}
+  const laatsteKoersPerIsin: Record<string, number> = {}
+  let txIndex = 0
+  let cumIngelegd = 0
+
+  const result: PortfolioDagPunt[] = []
+  for (const dag of handelsdagen) {
+    while (txIndex < sorted.length && sorted[txIndex].datum.slice(0, 10) <= dag) {
+      const t = sorted[txIndex]
+      if (t.isin) aantalPerIsin[t.isin] = (aantalPerIsin[t.isin] ?? 0) + t.aantal
+      if (t.aantal > 0) cumIngelegd += Math.abs(t.totaal)
+      txIndex++
+    }
+
+    let waarde = 0
+    for (const [isin, aantal] of Object.entries(aantalPerIsin)) {
+      if (aantal <= 0.0001) continue
+      const priceMap = koersHistorieDagelijks[isin]
+      let koers = priceMap?.[dag]
+      if (koers == null && dag === vandaag) {
+        const symbol = ISIN_MAP[isin]
+        const live = symbol ? koersen[symbol]?.price : undefined
+        if (live && live > 0) koers = live
+      }
+      if (koers != null) laatsteKoersPerIsin[isin] = koers
+      waarde += aantal * (koers ?? laatsteKoersPerIsin[isin] ?? 0)
+    }
+
+    if (waarde > 0) result.push({ datum: dag, waarde, ingelegd: cumIngelegd })
+  }
+
+  return result
+}
+
+// ─── adaptief downsamplen (performance bij lange periodes, bv. 5 jaar dagdata) ──
+
+// Dunt een reeks uit naar maximaal `maxPunten` punten. Pakt per segment zowel
+// het hoogste als het laagste punt i.p.v. bv. elke Nde punt te nemen of te
+// middelen — anders vlakt een scherpe piek/dal precies weg, wat dit juist moet
+// voorkomen (de portefeuille-piek moet zichtbaar blijven bij "5 jaar"/"Alles").
+export function downsampleBehoudExtremen<T>(
+  data: T[],
+  maxPunten: number,
+  getWaarde: (item: T) => number,
+): T[] {
+  if (data.length <= maxPunten) return data
+  const segmenten = Math.max(1, Math.floor(maxPunten / 2))
+  const segmentGrootte = data.length / segmenten
+  const result: T[] = []
+
+  for (let s = 0; s < segmenten; s++) {
+    const start = Math.floor(s * segmentGrootte)
+    const eind = s === segmenten - 1 ? data.length : Math.floor((s + 1) * segmentGrootte)
+    if (start >= eind) continue
+
+    let minI = start
+    let maxI = start
+    for (let i = start + 1; i < eind; i++) {
+      if (getWaarde(data[i]) < getWaarde(data[minI])) minI = i
+      if (getWaarde(data[i]) > getWaarde(data[maxI])) maxI = i
+    }
+
+    if (minI === maxI) result.push(data[minI])
+    else if (minI < maxI) result.push(data[minI], data[maxI])
+    else result.push(data[maxI], data[minI])
+  }
+
+  return result
 }
 
 // Time-weighted-return-style monthly breakdown: isolates koersrendement from

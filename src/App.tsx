@@ -57,7 +57,7 @@ export default function App() {
   }, [dark])
 
   const { koersen, loading: koersenLoading } = useKoersen()
-  const { koersHistorie } = useHistorischeKoersen()
+  const { koersHistorie, koersHistorieDagelijks } = useHistorischeKoersen()
   const portfolio = usePortfolio(koersen)
 
   const tabContent: Record<TabId, React.ReactNode> = {
@@ -76,6 +76,7 @@ export default function App() {
         manualEntries={portfolio.manualEntries}
         positions={portfolio.positions}
         koersHistorie={koersHistorie}
+        koersHistorieDagelijks={koersHistorieDagelijks}
         koersen={koersen}
         loading={koersenLoading}
       />
