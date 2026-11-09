@@ -218,8 +218,9 @@ export function calcPortfolioHistorie(
     let waarde = 0
     let isSchatting = false
     // Zoals in berekenMaandData: als de live koers voor de lopende maand niet
-    // beschikbaar is, valt koers terug op de laatst bekende maand-eindkoers —
-    // gelijk aan de vorige maand, dus geen echte meting. Dan geen percentage tonen.
+    // beschikbaar is, óf een afgesloten maand geen eigen slotkoers heeft (carried-
+    // forward), valt koers terug op de laatst bekende maand-eindkoers — gelijk aan
+    // de vorige maand, dus geen echte meting. Dan geen percentage tonen.
     let huidigeMaandOnbetrouwbaar = false
     for (const [isin, { aantal }] of Object.entries(pos)) {
       const priceMap = koersHistorie[isin]
@@ -238,7 +239,7 @@ export function calcPortfolioHistorie(
       } else {
         const r = resolveKoers(priceMap, thisKey)
         koers = r.koers
-        if (r.isSchatting) isSchatting = true
+        if (r.isSchatting) { isSchatting = true; huidigeMaandOnbetrouwbaar = true }
       }
 
       waarde += aantal * koers
@@ -322,10 +323,12 @@ function berekenMaandData(
   let portfolioBeginWaarde = 0
   let portfolioEindWaarde = 0
   let isSchatting = false
-  // Waar voor de lopende maand geen live koers beschikbaar was: dan valt eindKoers
-  // terug op de laatst bekende (carried-forward) maand-eindkoers, gelijk aan de
-  // beginkoers — dat geeft een schijnbaar "+0,00%" i.p.v. een echte meting. Zo'n
-  // maand mag geen percentage tonen (zie rendementPct hieronder).
+  // Wanneer de eindkoers niet op een echte maand-eindkoers berust — ofwel de
+  // lopende maand zonder live koers, ofwel een afgesloten maand waarvan de eigen
+  // slotkoers (nog) ontbreekt — valt eindKoers terug op de laatst bekende
+  // (carried-forward) koers, gelijk aan de beginkoers. Dat geeft een schijnbaar
+  // "+0,00%" i.p.v. een echte meting. Zo'n maand mag geen percentage tonen (zie
+  // rendementPct hieronder) — wel duidelijk als schatting/geen data gemarkeerd.
   let huidigeMaandOnbetrouwbaar = false
   const positieDetails: PositieMaandDetail[] = []
 
@@ -359,6 +362,9 @@ function berekenMaandData(
       const r = resolveKoers(priceMap, thisKey)
       eindKoers = r.koers
       eindIsSchatting = r.isSchatting
+      // Afgesloten maand zonder eigen slotkoers (carried-forward naar een eerdere
+      // maand) — net zo onbetrouwbaar als de lopende maand zonder live koers.
+      if (r.isSchatting) eindLiveMislukt = true
     }
 
     const schat = beginRes.isSchatting || eindIsSchatting

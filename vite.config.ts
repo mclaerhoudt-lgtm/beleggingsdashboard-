@@ -102,6 +102,15 @@ export default defineConfig({
             handler: 'NetworkFirst',
             options: { cacheName: 'yahoo-finance', expiration: { maxAgeSeconds: 300 } },
           },
+          {
+            // Live- én historiedata uit /api/quote mag nooit stale uit de SW-cache
+            // komen (anders blijft bv. de net afgesloten maand "ontbreken" nadat de
+            // server al bijgewerkt is) — NetworkFirst valt alleen terug op cache als
+            // het netwerk echt onbereikbaar is.
+            urlPattern: /\/api\/quote(\?.*)?$/,
+            handler: 'NetworkFirst',
+            options: { cacheName: 'api-quote', networkTimeoutSeconds: 10, expiration: { maxAgeSeconds: 300 } },
+          },
         ],
       },
     }),

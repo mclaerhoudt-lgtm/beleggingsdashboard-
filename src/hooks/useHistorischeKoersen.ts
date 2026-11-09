@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocalStorage } from './useLocalStorage'
 import type { KoersHistorie } from '../types'
 import { ISIN_SYMBOLS } from '../types'
@@ -33,6 +33,16 @@ function huidigeMaandKey(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
+// De laatst-afgesloten kalendermaand (huidige maand − 1) — gebruikt om te
+// detecteren of de zojuist afgesloten maand al "gepromoveerd" is van live
+// koers naar historie. Zonder deze check blijft die maand soms +0,0% tonen
+// tot de volgende kalendermaand-wissel toevallig een refetch triggert.
+function vorigeMaandKey(): string {
+  const d = new Date()
+  d.setMonth(d.getMonth() - 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
 // Fetches monthly close prices (Yahoo Finance, via /api/quote?history=1) for every
 // ISIN in ISIN_SYMBOLS, caches them in localStorage keyed by Yahoo symbol, and
 // re-keys the result by ISIN for the rest of the app to join on.
@@ -45,7 +55,10 @@ export function useHistorischeKoersen() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`/api/quote?history=1&v=${HISTORY_VERSION}&symbols=${SYMBOLS.join(',')}`, {
+      // &m=<huidige maand> maakt de URL per kalendermaand uniek, zodat browser-
+      // cache/CDN/service-worker nooit een maand-oude response (waarin de net
+      // afgesloten maand nog ontbreekt) blijven hergebruiken.
+      const res = await fetch(`/api/quote?history=1&v=${HISTORY_VERSION}&m=${huidigeMaandKey()}&symbols=${SYMBOLS.join(',')}`, {
         signal: AbortSignal.timeout(15_000),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -71,12 +84,26 @@ export function useHistorischeKoersen() {
     }
   }, [setCache])
 
+  // Voorkomt een refetch-loop wanneer de vorige maand écht nooit gevuld raakt
+  // (bv. een symbool bestond toen nog niet) — probeer de gat-fix maximaal één
+  // keer per sessie i.p.v. bij elke render opnieuw.
+  const gapFetchGeprobeerd = useRef(false)
+
   useEffect(() => {
-    if (cache.fetchedMonth === huidigeMaandKey()) return
-    // Defer to a microtask so the state updates inside fetchHistorie don't
-    // run synchronously within the effect body itself.
-    queueMicrotask(() => { fetchHistorie() })
-  }, [cache.fetchedMonth, fetchHistorie])
+    if (cache.fetchedMonth !== huidigeMaandKey()) {
+      // Defer to a microtask so the state updates inside fetchHistorie don't
+      // run synchronously within the effect body itself.
+      queueMicrotask(() => { fetchHistorie() })
+      return
+    }
+    if (gapFetchGeprobeerd.current) return
+    const vorige = vorigeMaandKey()
+    const vorigeMaandOntbreekt = SYMBOLS.some(symbol => cache.bySymbol[symbol]?.[vorige] == null)
+    if (vorigeMaandOntbreekt) {
+      gapFetchGeprobeerd.current = true
+      queueMicrotask(() => { fetchHistorie() })
+    }
+  }, [cache.fetchedMonth, cache.bySymbol, fetchHistorie])
 
   // Re-key from Yahoo symbol -> ISIN, since the rest of the app joins on ISIN
   const koersHistorie = useMemo((): KoersHistorie => {

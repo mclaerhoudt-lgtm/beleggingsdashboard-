@@ -1,12 +1,17 @@
 import { useMemo } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
 import { MetricCard } from '../ui/MetricCard'
 import { SliderInput } from '../ui/SliderInput'
 import { GrowthChart } from '../charts/GrowthChart'
 import { ReturnChart } from '../charts/ReturnChart'
 import { formatEuro, formatPct, formatDatumKort, MAANDEN } from '../../utils/formatters'
 import { calcPortfolioHistorie, calcReeel, KORTE_NAAM } from '../../utils/calculations'
+import { useLocalStorage } from '../../hooks/useLocalStorage'
 import type { Settings, Transaction, AccountEvent, ManualEntry, Position, KoersHistorie, KoersCache } from '../../types'
 import { COLORS } from '../../theme'
+
+const VERBERG_KEY = 'bdash_verberg_bedragen'
+const MASKER = '€ ••••••'
 
 // Per-ISIN dot colour (brand palette)
 const ISIN_KLEUR: Record<string, string> = {
@@ -35,8 +40,8 @@ interface Props {
 
 // ─── Sub-breakdown rows used inside the expanded metric cards ─────────────────
 
-function BreakdownRij({ isin, naam, bedrag, pct, sub }: {
-  isin: string; naam: string; bedrag: number; pct: number; sub?: string
+function BreakdownRij({ isin, naam, bedrag, pct, sub, verborgen }: {
+  isin: string; naam: string; bedrag: number; pct: number; sub?: string; verborgen?: boolean
 }) {
   const kleur = ISIN_KLEUR[isin] ?? FALLBACK_KLEUR
   return (
@@ -44,7 +49,7 @@ function BreakdownRij({ isin, naam, bedrag, pct, sub }: {
       <div className="flex items-center gap-1.5 text-xs">
         <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: kleur }} />
         <span className="truncate text-gray-600 dark:text-gray-400">{naam}</span>
-        <span className="ml-auto tabular-nums text-gray-700 dark:text-gray-300 shrink-0">{formatEuro(bedrag)}</span>
+        <span className="ml-auto tabular-nums text-gray-700 dark:text-gray-300 shrink-0">{verborgen ? MASKER : formatEuro(bedrag)}</span>
         <span className="tabular-nums text-gray-400 w-9 text-right shrink-0">{pct.toFixed(0)}%</span>
       </div>
       {sub && <p className="text-xs text-gray-400 dark:text-gray-500 pl-3.5">{sub}</p>}
@@ -60,6 +65,11 @@ export function Overzicht({
 }: Props) {
   const reeel  = calcReeel(portfolioValue, settings.inflatie, new Date().getFullYear(), eersteJaar)
   const isPos  = rendement >= 0
+
+  // Verbergt de euro-bedragen (privacy, bv. als iemand meekijkt) — percentages
+  // blijven altijd zichtbaar. Keuze overleeft een herlaad/tab-wissel via localStorage.
+  const [verborgen, setVerborgen] = useLocalStorage<boolean>(VERBERG_KEY, false)
+  const toon = (bedrag: number) => verborgen ? MASKER : formatEuro(bedrag)
 
   const historie = useMemo(
     () => calcPortfolioHistorie(transactions, koersHistorie, koersen),
@@ -108,7 +118,7 @@ export function Overzicht({
           naam:   KORTE_NAAM[p.isin] ?? p.product.slice(0, 16),
           bedrag,
           pct:    totaalIngelegd > 0 ? (bedrag / totaalIngelegd) * 100 : 0,
-          sub:    `${p.aantal % 1 === 0 ? p.aantal : p.aantal.toFixed(4)}× @ gem. ${formatEuro(p.gemAankoopprijs)}`,
+          sub:    `${p.aantal % 1 === 0 ? p.aantal : p.aantal.toFixed(4)}× @ gem. ${verborgen ? MASKER : formatEuro(p.gemAankoopprijs)}`,
         }
       })
     const totalTransKosten = transactions.reduce((s, t) => s + t.transactiekosten, 0)
@@ -122,38 +132,48 @@ export function Overzicht({
       })
     }
     return perIsin
-  }, [positions, totaalIngelegd, transactions])
+  }, [positions, totaalIngelegd, transactions, verborgen])
 
   const isEmpty = transactions.length === 0 && manualEntries.length === 0
 
   return (
     <div className="space-y-6">
-      {laatsteDatum && (
-        <p className="text-xs text-gray-400 dark:text-gray-500">
-          Data bijgewerkt t/m <span className="font-medium text-gray-500 dark:text-gray-400">{formatDatumKort(laatsteDatum)}</span>
-        </p>
-      )}
+      <div className="flex items-center justify-between gap-2">
+        {laatsteDatum ? (
+          <p className="text-xs text-gray-400 dark:text-gray-500">
+            Data bijgewerkt t/m <span className="font-medium text-gray-500 dark:text-gray-400">{formatDatumKort(laatsteDatum)}</span>
+          </p>
+        ) : <span />}
+        <button
+          onClick={() => setVerborgen(v => !v)}
+          title={verborgen ? 'Toon bedragen' : 'Verberg bedragen'}
+          aria-label={verborgen ? 'Toon bedragen' : 'Verberg bedragen'}
+          className="w-11 h-11 flex items-center justify-center rounded-xl text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors shrink-0"
+        >
+          {verborgen ? <EyeOff size={20} /> : <Eye size={20} />}
+        </button>
+      </div>
 
       {/* Metric cards — first two have expandable position breakdown */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
 
         {/* Portefeuillewaarde with position breakdown */}
-        <MetricCard label="Huidige waarde" value={formatEuro(portfolioValue)} loading={loading}>
+        <MetricCard label="Huidige waarde" value={toon(portfolioValue)} loading={loading}>
           {waardeRijen.length > 0 && (
             <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-700 space-y-1.5">
               {waardeRijen.map(r => (
-                <BreakdownRij key={r.isin} {...r} />
+                <BreakdownRij key={r.isin} {...r} verborgen={verborgen} />
               ))}
             </div>
           )}
         </MetricCard>
 
         {/* Totaal ingelegd with per-positie breakdown */}
-        <MetricCard label="Totaal ingelegd" value={formatEuro(totaalIngelegd)}>
+        <MetricCard label="Totaal ingelegd" value={toon(totaalIngelegd)}>
           {ingelegdRijen.length > 0 && (
             <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-700 space-y-1.5">
               {ingelegdRijen.map(r => (
-                <BreakdownRij key={r.isin} {...r} sub={r.sub} />
+                <BreakdownRij key={r.isin} {...r} sub={r.sub} verborgen={verborgen} />
               ))}
             </div>
           )}
@@ -161,13 +181,13 @@ export function Overzicht({
 
         <MetricCard
           label="Rendement"
-          value={formatEuro(rendement)}
+          value={toon(rendement)}
           sub={formatPct(rendementPct)}
           positive={isPos}
         />
         <MetricCard
           label="Reëel (na inflatie)"
-          value={formatEuro(reeel)}
+          value={toon(reeel)}
           sub={`${settings.inflatie}% inflatie`}
         />
       </div>
