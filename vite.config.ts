@@ -34,6 +34,18 @@ async function fetchYahoo(symbol: string) {
   }
 }
 
+// Zelfde correctie als api/quote.ts: labelen op basis van de lokale tijdzone
+// van de beurs per timestamp (DST-proof) i.p.v. één vaste gmtoffset, die over
+// een zomer/wintertijd-grens (bv. eind oktober) een uur mis is en zo de candle
+// in de verkeerde maand laat vallen.
+function maandVan(ts: number, tz: string): string {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit' })
+  const parts = fmt.formatToParts(new Date(ts * 1000))
+  const y = parts.find(p => p.type === 'year')!.value
+  const m = parts.find(p => p.type === 'month')!.value
+  return `${y}-${m}`
+}
+
 async function fetchYahooHistory(symbol: string) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1mo&range=5y`
   const res = await fetch(url, {
@@ -45,7 +57,7 @@ async function fetchYahooHistory(symbol: string) {
     chart: {
       result: Array<{
         timestamp?: number[]
-        meta?: { gmtoffset?: number }
+        meta?: { exchangeTimezoneName?: string }
         indicators: {
           quote: Array<{ close: Array<number | null> }>
           adjclose?: Array<{ adjclose: Array<number | null> }>
@@ -58,16 +70,14 @@ async function fetchYahooHistory(symbol: string) {
   const closes = result?.indicators?.quote?.[0]?.close ?? []
   const adjcloses = result?.indicators?.adjclose?.[0]?.adjclose ?? []
 
-  // Zelfde correctie als api/quote.ts: labelen op basis van lokale beurstijd
-  // i.p.v. UTC, en de nog lopende maand niet als afgesloten close bewaren.
-  const gmtoffset = result?.meta?.gmtoffset ?? 0
-  const huidigeMaand = new Date(Date.now() + gmtoffset * 1000).toISOString().slice(0, 7)
+  const tz = result?.meta?.exchangeTimezoneName ?? 'Europe/Amsterdam'
+  const huidigeMaand = maandVan(Math.floor(Date.now() / 1000), tz)
 
   const perMaand = new Map<string, number>()
   for (let i = 0; i < timestamps.length; i++) {
     const close = closes[i] ?? adjcloses[i]
     if (close == null) continue
-    const month = new Date((timestamps[i] + gmtoffset) * 1000).toISOString().slice(0, 7)
+    const month = maandVan(timestamps[i], tz)
     if (month === huidigeMaand) continue
     perMaand.set(month, close)
   }

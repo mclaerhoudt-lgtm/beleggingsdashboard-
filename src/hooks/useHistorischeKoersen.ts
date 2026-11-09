@@ -4,17 +4,19 @@ import type { KoersHistorie } from '../types'
 import { ISIN_SYMBOLS } from '../types'
 
 const SYMBOLS = Object.values(ISIN_SYMBOLS)
-// v2: bumped omdat de maandlabeling voorheen in UTC i.p.v. beurstijd gebeurde
-// (schoof candles rond maandgrenzen een maand terug) — dwingt een verse fetch
-// af zodat al gecachte, verkeerd gelabelde data niet blijft hangen tot de
-// volgende kalendermaand.
-const CACHE_KEY = 'bdash_historische_koersen_v2'
+// v3: bumped omdat de maandlabeling voorheen met één vaste gmtoffset gebeurde,
+// die alleen op het moment van ophalen klopt — over een zomer/wintertijd-grens
+// (bv. eind oktober) is die een uur mis, waardoor die maand (oktober) in élk
+// jaar van de reeks ontbrak. Een nieuwe cache-key dwingt een volledig verse
+// fetch af zodat al gecachte, verkeerd gelabelde data niet blijft hangen tot
+// toevallig "vorige maand" weer oktober is.
+const CACHE_KEY = 'bdash_historische_koersen_v3'
 // Zelfde reden als hierboven, maar dan voor de browser/CDN-HTTP-cache: de
 // /api/quote?history=1-response heeft max-age=3600. Browsers die vóór deze
 // fix live ging al een (foutieve) response cachten, zouden die tot een uur
 // blijven hergebruiken zonder de server opnieuw te raken. Een nieuwe query-
 // parameter maakt het een ander URL, dus een gegarandeerd verse fetch.
-const HISTORY_VERSION = 2
+const HISTORY_VERSION = 3
 
 interface HistorieResponseItem {
   symbol: string

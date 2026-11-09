@@ -5,7 +5,7 @@ interface YahooMeta {
   chartPreviousClose?: number
   regularMarketPreviousClose?: number
   currency?: string
-  gmtoffset?: number   // beursoffset t.o.v. UTC in seconden — nodig om candles in lokale beurstijd te labelen
+  exchangeTimezoneName?: string   // bv. 'Europe/Amsterdam' — nodig om candles in lokale beurstijd te labelen, DST-proof
 }
 
 interface YahooResult {
@@ -41,6 +41,21 @@ interface HistoryResult {
 }
 
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+
+// Bepaalt de kalendermaand (YYYY-MM) van een Yahoo-timestamp (seconden) in de
+// lokale tijdzone van de beurs. Een vaste gmtoffset klopt alleen op het moment
+// van ophalen — over een zomer/wintertijd-grens (bv. de laatste zondag van
+// oktober) is die een uur mis, waardoor de candle rond de maandgrens in de
+// verkeerde maand valt (oktober "verdwijnt" tussen september en november).
+// Intl.DateTimeFormat past per datum de juiste DST-regel toe, dus dit blijft
+// correct over alle jaren en beide DST-overgangen heen.
+function maandVan(ts: number, tz: string): string {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit' })
+  const parts = fmt.formatToParts(new Date(ts * 1000))
+  const y = parts.find(p => p.type === 'year')!.value
+  const m = parts.find(p => p.type === 'month')!.value
+  return `${y}-${m}`
+}
 
 // Per-request in-memory cache (Edge Functions are short-lived, but helps with burst requests)
 const cache = new Map<string, YahooResult>()
@@ -89,12 +104,8 @@ async function fetchHistory(symbol: string): Promise<HistoryResult> {
   const closes = result?.indicators?.quote?.[0]?.close ?? []
   const adjcloses = result?.indicators?.adjclose?.[0]?.adjclose ?? []
 
-  // Yahoo's candle timestamps are UTC. Labelen op basis van UTC schuift de
-  // maand terug voor beurzen ten oosten van Greenwich (bv. Amsterdam), omdat
-  // "1 juni 00:00 lokaal" al "31 mei 22:00 UTC" is. Corrigeer met de beurs-
-  // offset (gmtoffset, in seconden) vóór het bepalen van de kalendermaand.
-  const gmtoffset = result?.meta?.gmtoffset ?? 0
-  const huidigeMaand = new Date(Date.now() + gmtoffset * 1000).toISOString().slice(0, 7)
+  const tz = result?.meta?.exchangeTimezoneName ?? 'Europe/Amsterdam'
+  const huidigeMaand = maandVan(Math.floor(Date.now() / 1000), tz)
 
   // Map i.p.v. array: als twee candles (zou niet moeten, maar defensief) op
   // dezelfde maand uitkomen, wint de laatste (meest recente) close.
@@ -102,7 +113,7 @@ async function fetchHistory(symbol: string): Promise<HistoryResult> {
   for (let i = 0; i < timestamps.length; i++) {
     const close = closes[i] ?? adjcloses[i]
     if (close == null) continue
-    const month = new Date((timestamps[i] + gmtoffset) * 1000).toISOString().slice(0, 7)
+    const month = maandVan(timestamps[i], tz)
     // De huidige, nog lopende maand heeft geen echte close — Yahoo levert hier
     // de tussentijdse koers. Die mag nooit als afgesloten maand-eindkoers
     // opgeslagen worden (de live koers dekt de lopende maand al af).
